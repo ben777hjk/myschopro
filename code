@@ -1,0 +1,3788 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Rust-like 3D Prototype (Better Oxum's + Better Colliders + Better Loot)</title>
+<style>
+  body { margin:0; overflow:hidden; background:#000; font-family:sans-serif; color:white; user-select:none; }
+  #statusHud {
+    position:fixed; right:18px; bottom:18px; display:flex; flex-direction:column; gap:8px;
+    z-index:10; min-width:170px;
+  }
+  .hudStat {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:8px 12px; border-radius:999px; font-size:12px; font-weight:700;
+    color:#101010; background:rgba(255,255,255,0.9);
+    border:1px solid rgba(255,255,255,0.22);
+  }
+  .hudBlue { background:#59b8ff; }
+  .hudGreen { background:#70d67e; }
+  .hudOrange { background:#ffaf52; }
+  #crosshair {
+    position:fixed; top:50%; left:50%; width:10px; height:10px;
+    margin-left:-5px; margin-top:-5px; border:2px solid white;
+    border-radius:50%; pointer-events:none; z-index:5;
+  }
+  #hotbar {
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+    display:flex; gap:6px; z-index:10;
+  }
+  .slot, .lootSlot {
+    width:56px; height:56px; border:2px solid rgba(255,255,255,0.28); background:rgba(16,16,16,0.75);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    font-size:11px; box-sizing:border-box; position:relative; border-radius:10px;
+    backdrop-filter:blur(4px);
+  }
+  .slot.selected {
+    border-color:#ffd700;
+    box-shadow:0 0 0 1px rgba(255,215,0,0.35);
+  }
+  .slot .count, .lootSlot .count {
+    position:absolute; bottom:2px; right:4px; font-size:10px;
+  }
+  .slot .icon, .lootSlot .icon {
+    font-size:22px; line-height:1; margin-bottom:4px;
+    text-shadow:0 1px 3px rgba(0,0,0,0.4);
+  }
+  .slot .name, .lootSlot .name {
+    font-size:9px; text-align:center; line-height:1.1; padding:0 3px;
+    color:#f0f0f0;
+  }
+  #inventoryPanel {
+    position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:430px; min-height:330px; background:rgba(10,10,10,0.92); border:1px solid rgba(255,255,255,0.18);
+    display:none; flex-direction:column; padding:10px; box-sizing:border-box; z-index:20;
+    border-radius:12px; backdrop-filter:blur(6px);
+  }
+  #inventoryGrid {
+    display:grid; grid-template-columns:repeat(5,1fr); grid-gap:6px; margin-top:10px;
+  }
+  #inventoryPanel h3, #lootPanel h3 {
+    margin:0; font-size:14px; margin-bottom:6px;
+  }
+  #lootPanel {
+    position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:320px; min-height:330px; background:rgba(10,10,10,0.92); border:1px solid rgba(255,255,255,0.18);
+    display:none; flex-direction:column; padding:10px; box-sizing:border-box; z-index:25;
+    border-radius:12px; backdrop-filter:blur(6px);
+  }
+  #lootGrid {
+    display:grid; grid-template-columns:repeat(4,1fr); grid-gap:6px; margin-top:10px;
+  }
+  #dragItem {
+    position:fixed; pointer-events:none; z-index:30;
+    padding:4px 6px; background:rgba(0,0,0,0.8); border:1px solid #fff;
+    font-size:11px; display:none;
+  }
+  .panelTabs {
+    display:flex; gap:8px; margin-bottom:10px;
+  }
+  .panelTab {
+    padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.16);
+    background:rgba(255,255,255,0.06); color:#ddd; cursor:pointer; font-size:12px;
+  }
+  .panelTab.active {
+    background:#b48336; color:#111; border-color:#d9b26a; font-weight:700;
+  }
+  .panelPage {
+    display:none;
+  }
+  .panelPage.active {
+    display:block;
+  }
+  #craftingGrid {
+    display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-top:8px;
+  }
+  .recipeCard {
+    padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12);
+    background:rgba(255,255,255,0.05); cursor:pointer;
+  }
+  .recipeCard.disabled {
+    opacity:0.45;
+    cursor:not-allowed;
+  }
+  .recipeTitle {
+    font-size:13px; font-weight:700; margin-bottom:4px;
+  }
+  .recipeMeta {
+    font-size:11px; color:#d0d0d0;
+  }
+  #craftQueue {
+    margin-top:10px; padding:10px; border-radius:10px;
+    background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12);
+  }
+  #craftProgressBar {
+    width:100%; height:10px; border-radius:999px; overflow:hidden;
+    background:rgba(255,255,255,0.08); margin-top:8px;
+  }
+  #craftProgressFill {
+    width:0%; height:100%; background:linear-gradient(90deg,#b48336,#e3c484);
+  }
+  #buildMenu {
+    position:fixed; bottom:92px; left:50%; transform:translateX(-50%);
+    display:none; gap:10px; padding:12px; border-radius:12px;
+    background:rgba(10,10,10,0.92); border:1px solid rgba(255,255,255,0.16);
+    z-index:18; backdrop-filter:blur(6px);
+  }
+  .buildCard {
+    width:140px; padding:10px; border-radius:10px; background:rgba(255,255,255,0.05);
+    border:1px solid rgba(255,255,255,0.12); cursor:pointer;
+  }
+  .buildCard.active {
+    border-color:#d9b26a; background:rgba(180,131,54,0.18);
+  }
+  #errorOverlay {
+    position:fixed; left:16px; bottom:16px; max-width:420px; display:none;
+    padding:10px 12px; background:rgba(120,20,20,0.92); color:#fff;
+    border:1px solid rgba(255,255,255,0.18); border-radius:10px; z-index:50;
+    font-size:12px; white-space:pre-wrap;
+  }
+  #mapPanel {
+    position:fixed; inset:32px; display:none; z-index:40;
+    background:rgba(10,14,20,0.92); border:1px solid rgba(255,255,255,0.18);
+    border-radius:14px; padding:18px; box-sizing:border-box;
+  }
+  #mapPanel h3 {
+    margin:0 0 12px 0; font-size:16px;
+  }
+  #mapCanvas {
+    width:100%; height:calc(100% - 28px); display:block;
+    border-radius:10px; background:#1b2633;
+  }
+  #radialMenu {
+    position:fixed; width:320px; height:320px; display:none; z-index:45;
+    transform:translate(-50%,-50%);
+    border-radius:50%; pointer-events:none;
+  }
+  .radialCenter {
+    position:absolute; left:50%; top:50%; width:150px; height:150px;
+    transform:translate(-50%,-50%); border-radius:50%;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:rgba(18,17,14,0.9); color:#f3ece1; text-align:center;
+    border:10px solid rgba(242,236,225,0.9); box-sizing:border-box;
+    box-shadow:0 12px 30px rgba(0,0,0,0.28);
+  }
+  .radialCenterTitle {
+    font-size:26px; font-weight:800; line-height:1;
+  }
+  .radialCenterMeta {
+    margin-top:8px; font-size:12px; color:rgba(243,236,225,0.75);
+  }
+  .radialOption {
+    position:absolute; width:88px; height:88px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center; text-align:center;
+    background:rgba(244,237,227,0.94); color:#b53f28; border:none;
+    font-size:12px; font-weight:800; line-height:1.15; pointer-events:auto; cursor:pointer;
+    box-shadow:0 10px 24px rgba(0,0,0,0.18);
+  }
+  .radialOption:hover {
+    background:#d74a2f; color:#fff;
+  }
+  #buildHint {
+    position:fixed; left:50%; bottom:88px; transform:translateX(-50%);
+    display:none; padding:8px 14px; border-radius:999px; z-index:16;
+    background:rgba(7,12,18,0.88); color:#dbeaff; border:1px solid rgba(112,183,255,0.3);
+    font-size:12px; font-weight:700; letter-spacing:0.03em;
+  }
+</style>
+</head>
+<body>
+
+<div id="statusHud">
+  <div class="hudStat hudBlue">Health <span id="health">100</span></div>
+  <div class="hudStat hudGreen">Hunger <span id="hunger">100</span></div>
+  <div class="hudStat hudOrange">Water <span id="water">100</span></div>
+</div>
+
+<div id="crosshair"></div>
+<div id="hotbar"></div>
+
+<div id="inventoryPanel">
+  <div class="panelTabs">
+    <button id="inventoryTabBtn" class="panelTab active">Inventory</button>
+    <button id="craftingTabBtn" class="panelTab">Crafting</button>
+  </div>
+  <div id="inventoryPage" class="panelPage active">
+    <h3>Inventory (Stacks of 100)</h3>
+    <div id="inventoryGrid"></div>
+  </div>
+  <div id="craftingPage" class="panelPage">
+    <h3>Crafting</h3>
+    <div id="craftingGrid"></div>
+    <div id="craftQueue">
+      <div id="craftQueueText">No item crafting</div>
+      <div id="craftProgressBar"><div id="craftProgressFill"></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="lootPanel">
+  <h3>Loot</h3>
+  <div id="lootGrid"></div>
+</div>
+
+<div id="buildMenu"></div>
+<div id="buildHint"></div>
+
+<div id="dragItem"></div>
+<div id="errorOverlay"></div>
+<div id="mapPanel">
+  <h3>Island Map</h3>
+  <canvas id="mapCanvas" width="900" height="600"></canvas>
+</div>
+<div id="radialMenu"></div>
+
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script>
+/* ---------------------------------------------------------
+   BASIC SETUP
+--------------------------------------------------------- */
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.1));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+const errorOverlay = document.getElementById("errorOverlay");
+const mapPanel = document.getElementById("mapPanel");
+const mapCanvas = document.getElementById("mapCanvas");
+const radialMenu = document.getElementById("radialMenu");
+
+function showErrorOverlay(err) {
+  if (!errorOverlay) return;
+  errorOverlay.style.display = "block";
+  errorOverlay.textContent = "Game error:\n" + (err && err.message ? err.message : String(err));
+}
+
+window.addEventListener("error", e => {
+  showErrorOverlay(e.error || e.message);
+});
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0x87ceeb, 80, 260);
+const daySkyColor = new THREE.Color(0x87ceeb);
+const nightSkyColor = new THREE.Color(0x09111f);
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
+scene.add(camera);
+const WORLD_RADIUS = 200;
+const TERRAIN_RADIUS = 160;
+const BEACH_INNER = 132;
+const WATER_INNER = 150;
+
+function randRange(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function getBiomeAtFromLayout(layout, x, z) {
+  const edge = Math.max(Math.abs(x), Math.abs(z));
+  if (edge > WATER_INNER) return "water";
+  if (edge > BEACH_INNER) return "beach";
+
+  const snowA =
+    ((x - layout.snowA.x) * (x - layout.snowA.x)) / (layout.snowA.rx * layout.snowA.rx) +
+    ((z - layout.snowA.z) * (z - layout.snowA.z)) / (layout.snowA.rz * layout.snowA.rz) +
+    Math.sin((x + layout.noiseX) * 0.035) * 0.12 +
+    Math.cos((z + layout.noiseZ) * 0.028) * 0.08;
+  const snowB =
+    ((x - layout.snowB.x) * (x - layout.snowB.x)) / (layout.snowB.rx * layout.snowB.rx) +
+    ((z - layout.snowB.z) * (z - layout.snowB.z)) / (layout.snowB.rz * layout.snowB.rz) +
+    Math.sin((x + z + layout.noiseMix) * 0.03) * 0.08;
+  if (snowA < 1 || snowB < 1) return "snow";
+
+  const desertA =
+    ((x - layout.desertA.x) * (x - layout.desertA.x)) / (layout.desertA.rx * layout.desertA.rx) +
+    ((z - layout.desertA.z) * (z - layout.desertA.z)) / (layout.desertA.rz * layout.desertA.rz) +
+    Math.cos((z - layout.noiseZ) * 0.03) * 0.1 +
+    Math.sin((x + layout.noiseX) * 0.026) * 0.08;
+  const desertB =
+    ((x - layout.desertB.x) * (x - layout.desertB.x)) / (layout.desertB.rx * layout.desertB.rx) +
+    ((z - layout.desertB.z) * (z - layout.desertB.z)) / (layout.desertB.rz * layout.desertB.rz) +
+    Math.sin((x - z + layout.noiseMix) * 0.028) * 0.07;
+  if (desertA < 1 || desertB < 1) return "desert";
+
+  return "grass";
+}
+
+function findRandomWorldSpot(layout, biome, options = {}) {
+  const minOxumsDist = options.minOxumsDist ?? 0;
+  const maxEdge = options.maxEdge ?? (BEACH_INNER - 8);
+  for (let attempt=0; attempt<250; attempt++) {
+    const x = randRange(-maxEdge, maxEdge);
+    const z = randRange(-maxEdge, maxEdge);
+    const edge = Math.max(Math.abs(x), Math.abs(z));
+    if (edge > maxEdge) continue;
+    if (biome && getBiomeAtFromLayout(layout, x, z) !== biome) continue;
+    if (layout.oxums && new THREE.Vector2(x - layout.oxums.x, z - layout.oxums.z).length() < minOxumsDist) continue;
+    return { x, z };
+  }
+  return biome === "grass" ? { x:0, z:0 } : { x:randRange(-80, 80), z:randRange(-80, 80) };
+}
+
+function createRoadSets(ox, oz) {
+  return [
+    [
+      { x:-148, z:oz - 26 },
+      { x:ox - 78, z:oz - 18 },
+      { x:ox - 28, z:oz - 6 },
+      { x:ox, z:oz }
+    ],
+    [
+      { x:ox, z:oz },
+      { x:ox + 28, z:oz - 20 },
+      { x:ox + 54, z:oz - 58 },
+      { x:Math.min(146, ox + 72), z:oz - 108 }
+    ],
+    [
+      { x:ox - 2, z:oz },
+      { x:ox - 26, z:oz + 26 },
+      { x:ox - 54, z:oz + 62 },
+      { x:ox - 74, z:Math.min(148, oz + 102) }
+    ],
+    [
+      { x:ox + 2, z:oz },
+      { x:ox + 32, z:oz + 24 },
+      { x:Math.min(138, ox + 62), z:Math.min(126, oz + 68) }
+    ]
+  ];
+}
+
+function createWorldLayout() {
+  const layout = {
+    noiseX: randRange(-90, 90),
+    noiseZ: randRange(-90, 90),
+    noiseMix: randRange(-120, 120),
+    snowA: { x:randRange(-118, -72), z:randRange(-92, -32), rx:randRange(64, 86), rz:randRange(82, 104) },
+    snowB: { x:randRange(-132, -82), z:randRange(-18, 34), rx:randRange(40, 58), rz:randRange(56, 76) },
+    desertA: { x:randRange(68, 108), z:randRange(-26, 24), rx:randRange(62, 80), rz:randRange(104, 128) },
+    desertB: { x:randRange(102, 132), z:randRange(54, 94), rx:randRange(30, 42), rz:randRange(42, 56) }
+  };
+
+  layout.oxums = findRandomWorldSpot(layout, "grass", { maxEdge: 110 });
+  layout.spawn = findRandomWorldSpot(layout, null, { minOxumsDist: 34, maxEdge: 118 });
+  layout.roads = createRoadSets(layout.oxums.x, layout.oxums.z);
+  return layout;
+}
+
+const worldLayout = createWorldLayout();
+const oxumsPosition = new THREE.Vector3(worldLayout.oxums.x, 0, worldLayout.oxums.z);
+
+/* ---------------------------------------------------------
+   LIGHTING
+--------------------------------------------------------- */
+const hemi = new THREE.HemisphereLight(0xffffff, 0x446655, 0.8);
+scene.add(hemi);
+
+const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+sun.position.set(80,120,-60);
+sun.castShadow = false;
+scene.add(sun);
+const DAY_NIGHT_SECONDS = 600;
+
+/* ---------------------------------------------------------
+   PLAYER
+--------------------------------------------------------- */
+const player = {
+  pos: new THREE.Vector3(worldLayout.spawn.x, 3, worldLayout.spawn.z),
+  vel: new THREE.Vector3(0, 0, 0),
+  yaw: 0,
+  pitch: 0,
+  speed: 0.18,
+  onGround: false,
+  health: 100,
+  hunger: 100,
+  water: 100,
+  radius: 0.7
+};
+
+camera.position.copy(player.pos);
+
+/* ---------------------------------------------------------
+   INPUT
+--------------------------------------------------------- */
+const keys = {};
+let inventoryOpen = false;
+let lootOpen = false;
+let inventoryOpenedByLoot = false;
+let ignoreMouseLookFrames = 0;
+let mapOpen = false;
+let activeInventoryTab = "inventory";
+let buildMenuOpen = false;
+let selectedBuildPiece = null;
+let pendingLookX = 0;
+let pendingLookY = 0;
+let radialMenuOpen = false;
+let highlightedBuild = null;
+
+window.addEventListener("keydown", e => {
+  const k = e.key.toLowerCase();
+
+  if (k === "m") {
+    mapOpen = !mapOpen;
+    mapPanel.style.display = mapOpen ? "block" : "none";
+    if (mapOpen) {
+      drawWorldMap();
+      if (document.pointerLockElement === canvas) document.exitPointerLock();
+    }
+    return;
+  }
+
+  if (k === "e") {
+    const target = getTargetedBuild();
+    if (target && target.userData.isDoor) {
+      toggleDoor(target);
+      return;
+    }
+    const lootTarget = getTargetedLootBox();
+    if (lootTarget) {
+      openLootBox(lootTarget);
+      return;
+    }
+  }
+
+  if (k === "tab") {
+    e.preventDefault();
+    if (lootOpen) {
+      lootOpen = false;
+      currentLootBox = null;
+      if (inventoryOpenedByLoot) inventoryOpen = false;
+      inventoryOpenedByLoot = false;
+    } else {
+      inventoryOpen = !inventoryOpen;
+    }
+
+    updatePanelLayout();
+
+    if (inventoryOpen || lootOpen) {
+      if (document.pointerLockElement === canvas) {
+        document.exitPointerLock();
+      }
+    }
+    return;
+  }
+
+  if (k === "escape") {
+    if (radialMenuOpen) {
+      closeRadialMenu();
+      return;
+    }
+    if (lootOpen) {
+      lootOpen = false;
+      currentLootBox = null;
+      if (inventoryOpenedByLoot) inventoryOpen = false;
+      inventoryOpenedByLoot = false;
+      updatePanelLayout();
+      return;
+    }
+    if (inventoryOpen) {
+      inventoryOpen = false;
+      updatePanelLayout();
+      return;
+    }
+    if (mapOpen) {
+      mapOpen = false;
+      mapPanel.style.display = "none";
+      return;
+    }
+    if (buildMenuOpen || selectedBuildPiece) {
+      buildMenuOpen = false;
+      selectedBuildPiece = null;
+      updateBuildMenu();
+      return;
+    }
+  }
+
+  if (k === "b") {
+    buildMenuOpen = !buildMenuOpen;
+    if (!buildMenuOpen) selectedBuildPiece = null;
+    if (buildMenuOpen && document.pointerLockElement === canvas) document.exitPointerLock();
+    updateBuildMenu();
+    return;
+  }
+
+  keys[k] = true;
+
+  if (k >= "1" && k <= "6") {
+    const index = parseInt(k,10) - 1;
+    selectHotbar(index);
+  }
+});
+
+window.addEventListener("keyup", e => {
+  keys[e.key.toLowerCase()] = false;
+});
+
+/* ---------------------------------------------------------
+   POINTER LOCK
+--------------------------------------------------------- */
+const canvas = renderer.domElement;
+
+canvas.onclick = () => {
+  if (!inventoryOpen && !lootOpen && !buildMenuOpen && !mapOpen && !radialMenuOpen) canvas.requestPointerLock();
+};
+
+window.addEventListener("contextmenu", e => {
+  e.preventDefault();
+});
+
+window.addEventListener("mousedown", e => {
+  if (e.button === 0 && radialMenuOpen) {
+    closeRadialMenu();
+    return;
+  }
+  if (e.button !== 2) return;
+  if (equippedTool === "building_plan") openBuildPieceMenu();
+  else if (equippedTool === "hammer") openHammerMenu();
+});
+
+document.addEventListener("pointerlockchange", () => {
+  if (document.pointerLockElement === canvas) {
+    ignoreMouseLookFrames = 2;
+    document.addEventListener("mousemove", mouseLook);
+  } else {
+    ignoreMouseLookFrames = 0;
+    document.removeEventListener("mousemove", mouseLook);
+  }
+});
+
+function mouseLook(e) {
+  if (inventoryOpen || lootOpen || mapOpen) return;
+  if (ignoreMouseLookFrames > 0) {
+    ignoreMouseLookFrames--;
+    return;
+  }
+  pendingLookX += THREE.MathUtils.clamp(e.movementX, -120, 120);
+  pendingLookY += THREE.MathUtils.clamp(e.movementY, -90, 90);
+}
+
+/* ---------------------------------------------------------
+   WORLD OBJECTS
+--------------------------------------------------------- */
+const interactables = [];
+const trees = [];
+const rocks = [];
+const animals = [];
+const lootBoxes = [];
+const colliders = [];
+const boxColliders = [];
+const grassPatches = [];
+const fallingTrees = [];
+const breakingNodes = [];
+
+const matTrunk   = new THREE.MeshStandardMaterial({ color:0x8b5a2b, roughness:0.9, metalness:0.0 });
+const matLeaf    = new THREE.MeshStandardMaterial({ color:0x2e8b57, roughness:0.8, metalness:0.0 });
+const matRock    = new THREE.MeshStandardMaterial({ color:0x808080, roughness:0.7, metalness:0.1 });
+const matRockDark= new THREE.MeshStandardMaterial({ color:0x555555, roughness:0.8, metalness:0.1 });
+const matAnimalBody = new THREE.MeshStandardMaterial({ color:0xc96f53, roughness:0.8, metalness:0.0 });
+const matAnimalHead = new THREE.MeshStandardMaterial({ color:0xe0b090, roughness:0.8, metalness:0.0 });
+const matBoarBody = new THREE.MeshStandardMaterial({ color:0x8a5d43, roughness:0.9, metalness:0.0 });
+const matBoarHead = new THREE.MeshStandardMaterial({ color:0xbc8a68, roughness:0.85, metalness:0.0 });
+const matDeerBody = new THREE.MeshStandardMaterial({ color:0x9e6d43, roughness:0.82, metalness:0.0 });
+const matDeerHead = new THREE.MeshStandardMaterial({ color:0xd5b08c, roughness:0.8, metalness:0.0 });
+const matBearBody = new THREE.MeshStandardMaterial({ color:0x4a3426, roughness:0.96, metalness:0.0 });
+const matBearHead = new THREE.MeshStandardMaterial({ color:0x6d5240, roughness:0.92, metalness:0.0 });
+
+/* PARTICLES */
+const particles = [];
+const particleGeo = new THREE.SphereGeometry(0.08, 6, 6);
+const particleMats = {
+  wood:  new THREE.MeshStandardMaterial({ color:0x8b5a2b, roughness:1, transparent:true }),
+  stone: new THREE.MeshStandardMaterial({ color:0xcccccc, roughness:1, transparent:true }),
+  meat:  new THREE.MeshStandardMaterial({ color:0xaa3333, roughness:1, transparent:true })
+};
+const weatherParticles = [];
+const weatherRainMat = new THREE.MeshStandardMaterial({ color:0x8fcaff, transparent:true, opacity:0.65 });
+const weatherSnowMat = new THREE.MeshStandardMaterial({ color:0xf4f8ff, transparent:true, opacity:0.9 });
+
+function spawnParticles(pos, type, count=8) {
+  const mat = particleMats[type] || particleMats.stone;
+  for (let i=0;i<count;i++) {
+    const m = new THREE.Mesh(particleGeo, mat.clone());
+    m.position.copy(pos);
+    scene.add(m);
+    const dir = new THREE.Vector3(
+      (Math.random()-0.5)*2,
+      Math.random()*2,
+      (Math.random()-0.5)*2
+    ).normalize().multiplyScalar(2);
+    particles.push({
+      mesh:m,
+      vel:dir,
+      life:0.5
+    });
+  }
+}
+
+function updateParticles(delta) {
+  for (let i=particles.length-1;i>=0;i--) {
+    const p = particles[i];
+    p.life -= delta;
+    p.vel.y -= 4*delta;
+    p.mesh.position.addScaledVector(p.vel, delta);
+    p.mesh.material.opacity = Math.max(0, p.life*2);
+    if (p.life <= 0) {
+      scene.remove(p.mesh);
+      particles.splice(i,1);
+    }
+  }
+}
+
+/* GROUND */
+function makeTerrainMaterial(colorA, colorB, size = 96) {
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#" + colorA.toString(16).padStart(6, "0");
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = "#" + colorB.toString(16).padStart(6, "0");
+  for (let i=0; i<220; i++) {
+    ctx.globalAlpha = 0.08 + Math.random()*0.08;
+    ctx.beginPath();
+    ctx.arc(Math.random()*size, Math.random()*size, 1 + Math.random()*3, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(14, 14);
+  return new THREE.MeshStandardMaterial({ map:tex, roughness:1.0, metalness:0.0 });
+}
+
+const terrainMats = {
+  grass: makeTerrainMaterial(0x547c38, 0x6f9550),
+  snow: makeTerrainMaterial(0xe2e7eb, 0xc6d0d8),
+  desert: makeTerrainMaterial(0xcda868, 0xe2c184),
+  sand: makeTerrainMaterial(0xd7bd7f, 0xe9d39c),
+  water: new THREE.MeshStandardMaterial({ color:0x2a6da0, roughness:0.22, metalness:0.05, transparent:true, opacity:0.9 })
+};
+
+function addGroundPatch(x, z, w, h, mat, y = 0) {
+  const patch = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+  patch.rotation.x = -Math.PI/2;
+  patch.position.set(x, y, z);
+  patch.receiveShadow = true;
+  scene.add(patch);
+  return patch;
+}
+
+function addBiomeBlob(x, z, rx, rz, mat, y = 0.01, points = 28) {
+  const shape = new THREE.Shape();
+  for (let i=0; i<=points; i++) {
+    const t = (i / points) * Math.PI * 2;
+    const wobble = 0.86 + Math.sin(t * 3 + x * 0.01) * 0.08 + Math.cos(t * 5 + z * 0.01) * 0.06;
+    const px = Math.cos(t) * rx * wobble;
+    const pz = Math.sin(t) * rz * wobble;
+    if (i === 0) shape.moveTo(px, pz);
+    else shape.lineTo(px, pz);
+  }
+  const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), mat);
+  mesh.rotation.x = -Math.PI/2;
+  mesh.position.set(x, y, z);
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+  return mesh;
+}
+
+addGroundPatch(0, 0, WORLD_RADIUS * 2.6, WORLD_RADIUS * 2.6, terrainMats.water, -0.35);
+addGroundPatch(0, 0, TERRAIN_RADIUS * 2, TERRAIN_RADIUS * 2, terrainMats.grass, 0);
+addBiomeBlob(worldLayout.snowA.x, worldLayout.snowA.z, worldLayout.snowA.rx, worldLayout.snowA.rz, terrainMats.snow, 0.012);
+addBiomeBlob(worldLayout.snowB.x, worldLayout.snowB.z, worldLayout.snowB.rx, worldLayout.snowB.rz, terrainMats.snow, 0.013);
+addBiomeBlob(worldLayout.desertA.x, worldLayout.desertA.z, worldLayout.desertA.rx, worldLayout.desertA.rz, terrainMats.desert, 0.014);
+addBiomeBlob(worldLayout.desertB.x, worldLayout.desertB.z, worldLayout.desertB.rx, worldLayout.desertB.rz, terrainMats.desert, 0.015);
+
+const roadMat = makeTerrainMaterial(0x55504a, 0x69645a, 64);
+
+function addRoad(points, width = 8) {
+  for (let i=0; i<points.length-1; i++) {
+    const a = points[i];
+    const b = points[i+1];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const len = Math.sqrt(dx*dx + dz*dz);
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(width, len), roadMat);
+    road.rotation.x = -Math.PI/2;
+    road.rotation.z = Math.atan2(dx, dz);
+    road.position.set((a.x + b.x) * 0.5, 0.025, (a.z + b.z) * 0.5);
+    road.receiveShadow = true;
+    scene.add(road);
+  }
+}
+
+addRoad(worldLayout.roads[0], 9);
+addRoad(worldLayout.roads[1], 8);
+addRoad(worldLayout.roads[2], 7);
+addRoad(worldLayout.roads[3], 7);
+
+const beachRing = new THREE.Shape();
+beachRing.moveTo(-WATER_INNER, -WATER_INNER);
+beachRing.lineTo(WATER_INNER, -WATER_INNER);
+beachRing.lineTo(WATER_INNER, WATER_INNER);
+beachRing.lineTo(-WATER_INNER, WATER_INNER);
+beachRing.lineTo(-WATER_INNER, -WATER_INNER);
+const beachHole = new THREE.Path();
+beachHole.moveTo(-BEACH_INNER, -BEACH_INNER);
+beachHole.lineTo(-BEACH_INNER, BEACH_INNER);
+beachHole.lineTo(BEACH_INNER, BEACH_INNER);
+beachHole.lineTo(BEACH_INNER, -BEACH_INNER);
+beachHole.lineTo(-BEACH_INNER, -BEACH_INNER);
+beachRing.holes.push(beachHole);
+const beachMesh = new THREE.Mesh(new THREE.ShapeGeometry(beachRing), terrainMats.sand);
+beachMesh.rotation.x = -Math.PI/2;
+beachMesh.position.y = 0.018;
+beachMesh.receiveShadow = true;
+scene.add(beachMesh);
+
+/* ---------------------------------------------------------
+   HELPERS
+--------------------------------------------------------- */
+const rockShineMat = new THREE.MeshStandardMaterial({
+  color:0xffd700,
+  emissive:0xffd700,
+  emissiveIntensity:1.5,
+  roughness:0.2,
+  metalness:0.6
+});
+const rockShineGeo = new THREE.SphereGeometry(0.18, 10, 10);
+
+const redXMat = new THREE.MeshStandardMaterial({
+  color:0xcc2222,
+  roughness:0.9,
+  metalness:0.0,
+  side:THREE.DoubleSide
+});
+
+function addShineToRock(group) {
+  const shine = new THREE.Mesh(rockShineGeo, rockShineMat.clone());
+  group.add(shine);
+
+  const angle = Math.random()*Math.PI*2;
+  const radius = 1.5;
+  const height = 1.2;
+  shine.position.set(Math.cos(angle)*radius, height, Math.sin(angle)*radius);
+
+  group.userData.shine = {
+    mesh: shine,
+    angle,
+    radius,
+    height
+  };
+}
+
+function moveRockShineSlightly(group) {
+  const d = group.userData.shine;
+  if (!d) return;
+  d.angle += (Math.random()-0.5)*0.8;
+  const radius = d.radius + (Math.random()-0.5)*0.3;
+  const height = d.height + (Math.random()-0.5)*0.3;
+  d.radius = Math.max(1.0, Math.min(2.0, radius));
+  d.height = Math.max(0.6, Math.min(1.8, height));
+  d.mesh.position.set(Math.cos(d.angle)*d.radius, d.height, Math.sin(d.angle)*d.radius);
+}
+
+function addRedXToTree(group) {
+  const xWidth = 0.8;
+  const thickness = 0.02;
+
+  const barGeo = new THREE.PlaneGeometry(xWidth, thickness);
+  const bar1 = new THREE.Mesh(barGeo, redXMat.clone());
+  const bar2 = new THREE.Mesh(barGeo, redXMat.clone());
+
+  const xGroup = new THREE.Group();
+  bar1.rotation.z = Math.PI/4;
+  bar2.rotation.z = -Math.PI/4;
+  xGroup.add(bar1);
+  xGroup.add(bar2);
+
+  const angle = Math.random()*Math.PI*2;
+  const radius = 0.7;
+  const height = 2.5 + Math.random()*2.0;
+
+  xGroup.position.set(Math.cos(angle)*radius, height, Math.sin(angle)*radius);
+  xGroup.lookAt(new THREE.Vector3(0, height, 0));
+  group.add(xGroup);
+
+  group.userData.redX = {
+    mesh: xGroup,
+    angle,
+    radius,
+    height
+  };
+}
+
+function moveTreeRedXSlightly(group) {
+  const d = group.userData.redX;
+  if (!d) return;
+  d.angle += (Math.random()-0.5)*0.8;
+  const radius = d.radius + (Math.random()-0.5)*0.2;
+  const height = d.height + (Math.random()-0.5)*0.5;
+  d.radius = Math.max(0.5, Math.min(1.0, radius));
+  d.height = Math.max(2.0, Math.min(4.5, height));
+  d.mesh.position.set(Math.cos(d.angle)*d.radius, d.height, Math.sin(d.angle)*d.radius);
+  d.mesh.lookAt(new THREE.Vector3(0, d.height, 0));
+}
+
+function addBoxCollider(x, z, halfX, halfZ) {
+  boxColliders.push({
+    minX: x - halfX,
+    maxX: x + halfX,
+    minZ: z - halfZ,
+    maxZ: z + halfZ
+  });
+}
+
+function addBoxColliderFromCenter(pos, sizeX, sizeZ) {
+  addBoxCollider(pos.x, pos.z, sizeX * 0.5, sizeZ * 0.5);
+}
+
+function addBoxColliderMinMax(minX, maxX, minZ, maxZ) {
+  boxColliders.push({ minX, maxX, minZ, maxZ });
+}
+
+function distanceToPlayer(worldPos) {
+  return player.pos.distanceTo(worldPos);
+}
+
+function getBiomeAt(x, z) {
+  return getBiomeAtFromLayout(worldLayout, x, z);
+}
+
+function removeFromArray(arr, item) {
+  const index = arr.indexOf(item);
+  if (index !== -1) arr.splice(index, 1);
+}
+
+function removeCircleColliderNear(pos, radius = 0.5) {
+  for (let i=colliders.length-1; i>=0; i--) {
+    if (colliders[i].pos.distanceTo(pos) <= radius) {
+      colliders.splice(i, 1);
+      return;
+    }
+  }
+}
+
+function spawnWeatherParticle(type) {
+  const isRain = type === "rain";
+  const startY = type === "snow" ? Math.max(22, player.pos.y + 22 + Math.random() * 10) : player.pos.y + 10 + Math.random() * 8;
+  const mesh = new THREE.Mesh(
+    isRain ? new THREE.BoxGeometry(0.035, 0.5, 0.035) : new THREE.SphereGeometry(0.05, 5, 5),
+    isRain ? weatherRainMat : weatherSnowMat
+  );
+  mesh.position.set(
+    player.pos.x + (Math.random()-0.5) * 26,
+    startY,
+    player.pos.z + (Math.random()-0.5) * 26
+  );
+  scene.add(mesh);
+  weatherParticles.push({
+    mesh,
+    type,
+    vel: new THREE.Vector3(
+      isRain ? -0.7 : (Math.random()-0.5) * 0.35,
+      isRain ? -11 : -(3.6 + Math.random()*2.0),
+      isRain ? 0.4 : (Math.random()-0.5) * 0.35
+    ),
+    life: isRain ? 1.4 : 9
+  });
+}
+
+function updateWeatherParticles(delta, biome, isRaining) {
+  const targetType = biome === "snow" ? "snow" : (isRaining ? "rain" : null);
+  const spawnCount = targetType === "snow" ? 5 : targetType === "rain" ? 10 : 0;
+  for (let i=0; i<spawnCount; i++) spawnWeatherParticle(targetType);
+
+  for (let i=weatherParticles.length-1; i>=0; i--) {
+    const p = weatherParticles[i];
+    p.life -= delta;
+    p.mesh.position.addScaledVector(p.vel, delta);
+    if (p.type === "snow") p.mesh.position.x += Math.sin((performance.now()*0.001) + i) * delta * 0.25;
+    if (p.mesh.position.y <= 0 || p.life <= 0) {
+      scene.remove(p.mesh);
+      weatherParticles.splice(i, 1);
+    }
+  }
+}
+
+function startTreeFall(tree) {
+  removeFromArray(interactables, tree);
+  removeFromArray(trees, tree);
+  removeCircleColliderNear(tree.position, 0.1);
+  tree.userData.falling = true;
+  tree.userData.fallDir = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw)).normalize();
+  if (tree.userData.fallDir.lengthSq() < 0.01) tree.userData.fallDir.set(1,0,0);
+  tree.userData.fallProgress = 0;
+  fallingTrees.push(tree);
+  spawnParticles(tree.position.clone().add(new THREE.Vector3(0, 2, 0)), "wood", 24);
+}
+
+function startNodeBreak(node) {
+  removeFromArray(interactables, node);
+  removeFromArray(rocks, node);
+  removeCircleColliderNear(new THREE.Vector3(node.position.x, 0, node.position.z), 0.1);
+  node.userData.breaking = true;
+  node.userData.breakProgress = 0;
+  breakingNodes.push(node);
+  spawnParticles(node.position.clone().add(new THREE.Vector3(0, 1.2, 0)), "stone", 22);
+}
+
+function updateFallingTrees(delta) {
+  for (let i=fallingTrees.length-1; i>=0; i--) {
+    const tree = fallingTrees[i];
+    tree.userData.fallProgress += delta * 0.9;
+    const p = Math.min(tree.userData.fallProgress, 1);
+    const dir = tree.userData.fallDir;
+    tree.rotation.z = dir.x * (-Math.PI * 0.48 * p);
+    tree.rotation.x = dir.z * (Math.PI * 0.48 * p);
+    if (p >= 1) {
+      scene.remove(tree);
+      fallingTrees.splice(i, 1);
+    }
+  }
+}
+
+function updateBreakingNodes(delta) {
+  for (let i=breakingNodes.length-1; i>=0; i--) {
+    const node = breakingNodes[i];
+    node.userData.breakProgress += delta * 1.8;
+    const p = Math.min(node.userData.breakProgress, 1);
+    const scale = Math.max(0.01, 1 - p);
+    node.scale.setScalar(scale);
+    node.position.y = 1 - p * 1.2;
+    node.rotation.y += delta * 5;
+    if (p >= 1) {
+      scene.remove(node);
+      breakingNodes.splice(i, 1);
+    }
+  }
+}
+
+function spawnGrassPatch(x, z, count = 8) {
+  const group = new THREE.Group();
+  const grassMat = new THREE.MeshStandardMaterial({
+    color:0x4f9d3b,
+    roughness:1,
+    side:THREE.DoubleSide
+  });
+
+  for (let i=0; i<count; i++) {
+    const blade = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.7 + Math.random()*0.4), grassMat);
+    blade.position.set((Math.random()-0.5)*1.8, 0.35, (Math.random()-0.5)*1.8);
+    blade.rotation.y = Math.random() * Math.PI;
+    blade.castShadow = false;
+    group.add(blade);
+  }
+
+  group.position.set(x, 0, z);
+  scene.add(group);
+  grassPatches.push(group);
+}
+
+/* ---------------------------------------------------------
+   MODELS (TALL PINES)
+--------------------------------------------------------- */
+function spawnTree(x,z){
+  const g = new THREE.Group();
+  const biome = getBiomeAt(x, z);
+
+  if (biome === "snow") {
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.45,0.65,5.8,7),
+      matTrunk
+    );
+    trunk.position.y = 2.9;
+    trunk.receiveShadow = true;
+    g.add(trunk);
+
+    const snowLeafMat = new THREE.MeshStandardMaterial({ color:0x5d7f5b, roughness:0.9 });
+    for (const layer of [
+      { r:2.6, h:3.2, y:5.2 },
+      { r:2.1, h:2.8, y:6.9 },
+      { r:1.7, h:2.2, y:8.3 }
+    ]) {
+      const foliage = new THREE.Mesh(new THREE.ConeGeometry(layer.r, layer.h, 9), snowLeafMat);
+      foliage.position.y = layer.y;
+      g.add(foliage);
+      for (let i=0; i<7; i++) {
+        const spot = new THREE.Mesh(
+          new THREE.SphereGeometry(0.18 + Math.random()*0.08, 5, 5),
+          new THREE.MeshStandardMaterial({ color:0xf5f8fb, roughness:1.0 })
+        );
+        const ang = Math.random() * Math.PI * 2;
+        spot.position.set(Math.cos(ang) * layer.r * 0.5, layer.y + (Math.random()-0.2)*0.7, Math.sin(ang) * layer.r * 0.5);
+        g.add(spot);
+      }
+    }
+
+    g.position.set(x,0,z);
+    g.userData = { type:"tree", hp:15 };
+    addRedXToTree(g);
+    scene.add(g);
+    trees.push(g);
+    interactables.push(g);
+    colliders.push({ pos:new THREE.Vector3(x,0,z), radius:2.0 });
+    return;
+  }
+
+  if (biome === "desert") {
+    const desertBarkMat = new THREE.MeshStandardMaterial({ color:0x8f6f41, roughness:0.94 });
+    const desertLeafMat = new THREE.MeshStandardMaterial({ color:0x6f8c44, roughness:0.92 });
+
+    const trunkLower = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.34,0.52,3.5,6),
+      desertBarkMat
+    );
+    trunkLower.position.y = 1.75;
+    trunkLower.rotation.z = 0.12;
+    trunkLower.receiveShadow = true;
+    g.add(trunkLower);
+
+    const trunkUpper = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.22,0.32,2.7,6),
+      desertBarkMat
+    );
+    trunkUpper.position.set(0.32,4.5,0.05);
+    trunkUpper.rotation.z = -0.18;
+    g.add(trunkUpper);
+
+    const armData = [
+      { x:0.7, y:4.2, z:0.15, rz:-1.0, ry:0.4, len:2.5 },
+      { x:-0.45, y:3.6, z:-0.2, rz:0.88, ry:-0.55, len:2.2 },
+      { x:0.1, y:5.35, z:0.25, rz:-0.1, ry:1.15, len:1.9 }
+    ];
+
+    for (const branchData of armData) {
+      const arm = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.09,0.15,branchData.len,5),
+        desertBarkMat
+      );
+      arm.position.set(branchData.x, branchData.y, branchData.z);
+      arm.rotation.z = branchData.rz;
+      arm.rotation.y = branchData.ry;
+      g.add(arm);
+
+      const tip = new THREE.Vector3(
+        branchData.x + Math.sin(branchData.ry) * (branchData.len * 0.55),
+        branchData.y + Math.cos(branchData.rz) * (branchData.len * 0.45),
+        branchData.z + Math.cos(branchData.ry) * (branchData.len * 0.35)
+      );
+
+      for (let i=0; i<8; i++) {
+        const leaf = new THREE.Mesh(
+          new THREE.SphereGeometry(0.24 + Math.random()*0.12, 6, 6),
+          desertLeafMat
+        );
+        const angle = (Math.PI * 2 * i) / 8 + Math.random()*0.28;
+        leaf.position.set(
+          tip.x + Math.cos(angle) * (0.3 + Math.random()*0.14),
+          tip.y + (Math.random()-0.35) * 0.4,
+          tip.z + Math.sin(angle) * (0.3 + Math.random()*0.14)
+        );
+        g.add(leaf);
+      }
+
+      for (let i=0; i<3; i++) {
+        const leaf = new THREE.Mesh(
+          new THREE.SphereGeometry(0.18 + Math.random()*0.08, 6, 6),
+          desertLeafMat
+        );
+        leaf.position.set(
+          tip.x + (Math.random()-0.5) * 0.42,
+          tip.y + 0.18 + Math.random()*0.22,
+          tip.z + (Math.random()-0.5) * 0.42
+        );
+        g.add(leaf);
+      }
+    }
+
+    const deadBranchGeo = new THREE.CylinderGeometry(0.03,0.06,0.85,4);
+    for (const data of [
+      { x:-0.18, y:2.6, z:0.2, rz:1.15, ry:0.2 },
+      { x:0.28, y:3.15, z:-0.12, rz:-1.25, ry:-0.6 }
+    ]) {
+      const twig = new THREE.Mesh(deadBranchGeo, desertBarkMat);
+      twig.position.set(data.x, data.y, data.z);
+      twig.rotation.z = data.rz;
+      twig.rotation.y = data.ry;
+      g.add(twig);
+    }
+
+    g.position.set(x,0,z);
+    g.userData = { type:"tree", hp:15 };
+    addRedXToTree(g);
+    scene.add(g);
+    trees.push(g);
+    interactables.push(g);
+    colliders.push({ pos:new THREE.Vector3(x,0,z), radius:1.8 });
+    return;
+  }
+
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.6,0.8,6,8),
+    matTrunk
+  );
+  trunk.position.y = 3;
+  trunk.castShadow = false;
+  trunk.receiveShadow = true;
+  g.add(trunk);
+
+  const foliage1 = new THREE.Mesh(
+    new THREE.ConeGeometry(3.0,4.0,10),
+    matLeaf
+  );
+  foliage1.position.y = 6;
+  foliage1.castShadow = false;
+  g.add(foliage1);
+
+  const foliage2 = foliage1.clone();
+  foliage2.scale.set(0.8,0.8,0.8);
+  foliage2.position.y = 8;
+  g.add(foliage2);
+
+  const foliage3 = foliage1.clone();
+  foliage3.scale.set(0.6,0.6,0.6);
+  foliage3.position.y = 9.5;
+  g.add(foliage3);
+
+  const branchGeo = new THREE.CylinderGeometry(0.1,0.16,2.8,6);
+  for (let i=0; i<3; i++) {
+    const branch = new THREE.Mesh(branchGeo, matTrunk);
+    branch.position.set(
+      Math.cos(i * Math.PI * 0.66) * 0.55,
+      5.4 + i * 0.75,
+      Math.sin(i * Math.PI * 0.66) * 0.55
+    );
+    branch.rotation.z = Math.PI * 0.32;
+    branch.rotation.y = i * Math.PI * 0.66;
+    branch.castShadow = false;
+    g.add(branch);
+  }
+
+  g.position.set(x,0,z);
+  g.userData = { type:"tree", hp:15 };
+  addRedXToTree(g);
+  scene.add(g);
+  trees.push(g);
+  interactables.push(g);
+
+  colliders.push({ pos:new THREE.Vector3(x,0,z), radius:2.2 });
+}
+
+function spawnRock(x,z){
+  const g = new THREE.Group();
+
+  const base = new THREE.Mesh(
+    new THREE.DodecahedronGeometry(1.8),
+    matRock
+  );
+  base.castShadow = true;
+  base.receiveShadow = true;
+  g.add(base);
+
+  const top = new THREE.Mesh(
+    new THREE.DodecahedronGeometry(1.1),
+    matRockDark
+  );
+  top.position.set(0.5,1.1,-0.3);
+  top.castShadow = false;
+  g.add(top);
+
+  for (const p of [
+    [-0.9,0.6,0.4,0.6],
+    [0.9,0.75,0.55,-0.5],
+    [0.2,1.6,0.45,0.6]
+  ]) {
+    const chunk = new THREE.Mesh(new THREE.DodecahedronGeometry(p[2]), Math.random() > 0.5 ? matRock : matRockDark);
+    chunk.position.set(p[0], p[1], p[3]);
+    chunk.castShadow = false;
+    g.add(chunk);
+  }
+
+  g.position.set(x,1,z);
+  g.userData = { type:"rock", hp:15 };
+  addShineToRock(g);
+  scene.add(g);
+  rocks.push(g);
+  interactables.push(g);
+
+  colliders.push({ pos:new THREE.Vector3(x,0,z), radius:2.0 });
+}
+
+function spawnAnimal(x,z,kind="boar"){
+  const g = new THREE.Group();
+  const isBear = kind === "bear";
+  const isDeer = kind === "deer";
+  const bodyMat = isBear ? matBearBody : isDeer ? matDeerBody : matBoarBody;
+  const headMat = isBear ? matBearHead : isDeer ? matDeerHead : matBoarHead;
+  const bodySize = isBear ? [2.4,1.35,1.2] : isDeer ? [1.65,1.0,0.72] : [1.8,1.0,0.95];
+  const headSize = isBear ? [1.05,0.95,0.9] : isDeer ? [0.62,0.7,0.58] : [0.9,0.8,0.85];
+
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(...bodySize),
+    bodyMat
+  );
+  body.position.y = isBear ? 0.95 : 0.75;
+  body.castShadow = false;
+  g.add(body);
+
+  const head = new THREE.Mesh(
+    new THREE.BoxGeometry(...headSize),
+    headMat
+  );
+  head.position.set(isBear ? 1.45 : isDeer ? 1.05 : 1.15, isBear ? 1.15 : 1.0, 0);
+  head.castShadow = false;
+  g.add(head);
+
+  if (!isDeer) {
+    const snout = new THREE.Mesh(
+      new THREE.BoxGeometry(isBear ? 0.45 : 0.36, isBear ? 0.36 : 0.3, isBear ? 0.55 : 0.46),
+      new THREE.MeshStandardMaterial({ color:0xf0b3a5, roughness:0.85 })
+    );
+    snout.position.set(isBear ? 1.95 : 1.68, isBear ? 1.0 : 0.9, 0);
+    g.add(snout);
+  }
+
+  for (const earZ of [-0.24, 0.24]) {
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(isBear ? 0.11 : 0.13, isBear ? 0.2 : 0.24, 6), headMat);
+    ear.position.set(isBear ? 1.25 : isDeer ? 0.95 : 1.08, isBear ? 1.65 : isDeer ? 1.62 : 1.48, earZ);
+    ear.rotation.z = earZ > 0 ? -0.35 : 0.35;
+    ear.rotation.x = Math.PI;
+    g.add(ear);
+  }
+
+  const legGeo = new THREE.BoxGeometry(isBear ? 0.34 : isDeer ? 0.18 : 0.25, isBear ? 0.72 : isDeer ? 0.78 : 0.5, isBear ? 0.34 : isDeer ? 0.18 : 0.25);
+  for (let sx of isBear ? [-0.85,0.85] : isDeer ? [-0.58,0.58] : [-0.65,0.65]) {
+    for (let sz of isBear ? [-0.42,0.42] : isDeer ? [-0.2,0.2] : [-0.32,0.32]) {
+      const leg = new THREE.Mesh(legGeo, bodyMat);
+      leg.position.set(sx, legGeo.parameters.height * 0.5, sz);
+      leg.castShadow = false;
+      g.add(leg);
+    }
+  }
+
+  if (isDeer) {
+    const neck = new THREE.Mesh(new THREE.BoxGeometry(0.25,0.8,0.25), bodyMat);
+    neck.position.set(0.72,1.18,0);
+    neck.rotation.z = -0.28;
+    g.add(neck);
+    for (const antlerZ of [-0.1, 0.1]) {
+      const antler = new THREE.Mesh(new THREE.BoxGeometry(0.05,0.42,0.05), new THREE.MeshStandardMaterial({ color:0xc9b48a, roughness:0.9 }));
+      antler.position.set(1.18,1.82,antlerZ);
+      g.add(antler);
+    }
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.18,0.18,0.1), new THREE.MeshStandardMaterial({ color:0xf3eadf, roughness:0.8 }));
+    tail.position.set(-0.9,1.02,0);
+    g.add(tail);
+  } else {
+    const tail = new THREE.Mesh(
+      new THREE.TorusGeometry(isBear ? 0.07 : 0.11, 0.03, 6, 12),
+      new THREE.MeshStandardMaterial({ color:0xf0b3a5, roughness:0.8 })
+    );
+    tail.position.set(isBear ? -1.18 : -1.02, isBear ? 1.15 : 1.0, 0);
+    tail.rotation.y = Math.PI * 0.5;
+    g.add(tail);
+  }
+
+  g.position.set(x,0,z);
+  g.userData = {
+    type:"animal",
+    species: kind,
+    hp: isBear ? 7 : isDeer ? 2 : 4,
+    state:"idle",
+    wait: 1 + Math.random()*2,
+    target: new THREE.Vector3(x,0,z),
+    home: new THREE.Vector3(x,0,z),
+    yaw: 0,
+    speed: isBear ? 4.6 : isDeer ? 5.4 : 4.1,
+    aggro: false,
+    aggroRange: isBear ? 9 : isDeer ? 0 : 5.5,
+    attackRange: isBear ? 1.8 : (isDeer ? 0 : 1.4),
+    damage: isBear ? 16 : (isDeer ? 0 : 10),
+    attackCooldown: 0,
+    passiveFlee: isDeer
+  };
+  scene.add(g);
+  animals.push(g);
+  interactables.push(g);
+}
+
+/* ---------------------------------------------------------
+   BETTER OXUM'S + BETTER LOOT CRATES
+--------------------------------------------------------- */
+function createDetailedLootCrate(colorA, colorB) {
+  const g = new THREE.Group();
+
+  const woodMat = new THREE.MeshStandardMaterial({ color:colorA, roughness:0.95 });
+  const trimMat = new THREE.MeshStandardMaterial({ color:colorB, roughness:0.55, metalness:0.2 });
+  const glowMat = new THREE.MeshStandardMaterial({
+    color:0xffd16b,
+    emissive:0xffb347,
+    emissiveIntensity:0.55,
+    roughness:0.4
+  });
+
+  const base = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.7, 1.0), woodMat);
+  base.castShadow = true;
+  base.receiveShadow = true;
+  g.add(base);
+
+  const lid = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.16, 1.08), trimMat);
+  lid.position.y = 0.43;
+  lid.castShadow = true;
+  g.add(lid);
+
+  const latch = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.18, 0.08), glowMat);
+  latch.position.set(0, 0.2, 0.54);
+  g.add(latch);
+
+  const edgeGeo = new THREE.BoxGeometry(0.08, 0.82, 1.04);
+  const edge1 = new THREE.Mesh(edgeGeo, trimMat);
+  const edge2 = edge1.clone();
+  edge1.position.x = -0.68;
+  edge2.position.x = 0.68;
+  g.add(edge1, edge2);
+
+  const bandGeo = new THREE.BoxGeometry(1.22, 0.1, 0.08);
+  const bandFront = new THREE.Mesh(bandGeo, trimMat);
+  const bandBack = bandFront.clone();
+  bandFront.position.set(0, 0.05, 0.5);
+  bandBack.position.set(0, 0.05, -0.5);
+  g.add(bandFront, bandBack);
+
+  const feetGeo = new THREE.BoxGeometry(0.14, 0.12, 0.14);
+  const footPositions = [
+    [-0.55,-0.4,-0.35],
+    [0.55,-0.4,-0.35],
+    [-0.55,-0.4,0.35],
+    [0.55,-0.4,0.35]
+  ];
+  for (const p of footPositions) {
+    const foot = new THREE.Mesh(feetGeo, trimMat);
+    foot.position.set(p[0], p[1], p[2]);
+    g.add(foot);
+  }
+
+  return g;
+}
+
+function spawnOxumsGasStation() {
+  const g = new THREE.Group();
+  const baseX = worldLayout.oxums.x;
+  const baseZ = worldLayout.oxums.z;
+  g.position.set(baseX,0,baseZ);
+
+  const wallMat = new THREE.MeshStandardMaterial({ color:0xcfcfc6, roughness:0.88 });
+  const darkWallMat = new THREE.MeshStandardMaterial({ color:0x8b8f93, roughness:0.78 });
+  const roofMat = new THREE.MeshStandardMaterial({ color:0x50545a, roughness:0.62 });
+  const floorMat = new THREE.MeshStandardMaterial({ color:0x6d6d6d, roughness:0.9 });
+  const glassMat = new THREE.MeshStandardMaterial({
+    color:0x8fd3ff,
+    roughness:0.12,
+    metalness:0.1,
+    transparent:true,
+    opacity:0.45
+  });
+  const signOrangeMat = new THREE.MeshStandardMaterial({
+    color:0xf28f1b,
+    emissive:0xb95f00,
+    emissiveIntensity:0.25,
+    roughness:0.55
+  });
+  const signBlueMat = new THREE.MeshStandardMaterial({
+    color:0x1c3f66,
+    emissive:0x10243f,
+    emissiveIntensity:0.2,
+    roughness:0.6
+  });
+  const pumpRedMat = new THREE.MeshStandardMaterial({ color:0xb72727, roughness:0.6 });
+  const pumpDarkMat = new THREE.MeshStandardMaterial({ color:0x252525, roughness:0.65 });
+  const concreteMat = new THREE.MeshStandardMaterial({ color:0x9a9a9a, roughness:0.95 });
+  const metalMat = new THREE.MeshStandardMaterial({ color:0x777c82, roughness:0.45, metalness:0.45 });
+  const warmLightMat = new THREE.MeshStandardMaterial({
+    color:0xfff1c1,
+    emissive:0xffdd88,
+    emissiveIntensity:0.8,
+    roughness:0.45
+  });
+
+  const pad = new THREE.Mesh(new THREE.BoxGeometry(38, 0.4, 28), concreteMat);
+  pad.position.set(0,0.2,0);
+  pad.receiveShadow = true;
+  g.add(pad);
+
+  const roadStrip = new THREE.Mesh(new THREE.BoxGeometry(38, 0.02, 8), new THREE.MeshStandardMaterial({ color:0x3a3a3a, roughness:1 }));
+  roadStrip.position.set(0,0.41,15);
+  g.add(roadStrip);
+
+  const yellowLineMat = new THREE.MeshStandardMaterial({ color:0xd6b317, roughness:0.9 });
+  for (let i=-2;i<=2;i++) {
+    const line = new THREE.Mesh(new THREE.BoxGeometry(2.2,0.03,0.24), yellowLineMat);
+    line.position.set(i * 5.8, 0.43, 15);
+    g.add(line);
+  }
+
+  const store = new THREE.Group();
+  store.position.set(0,0,-6);
+
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(18,0.35,12), floorMat);
+  floor.position.set(0,0.18,0);
+  floor.receiveShadow = true;
+  store.add(floor);
+
+  const backWall = new THREE.Mesh(new THREE.BoxGeometry(18,4.6,0.4), wallMat);
+  backWall.position.set(0,2.3,-6);
+  backWall.castShadow = true;
+  backWall.receiveShadow = true;
+  store.add(backWall);
+
+  const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.4,4.6,12), wallMat);
+  leftWall.position.set(-9,2.3,0);
+  leftWall.castShadow = true;
+  leftWall.receiveShadow = true;
+  store.add(leftWall);
+
+  const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.4,4.6,12), wallMat);
+  rightWall.position.set(9,2.3,0);
+  rightWall.castShadow = true;
+  rightWall.receiveShadow = true;
+  store.add(rightWall);
+
+  const frontWallLeft = new THREE.Mesh(new THREE.BoxGeometry(4.6,4.6,0.4), wallMat);
+  frontWallLeft.position.set(-6.7,2.3,6);
+  frontWallLeft.castShadow = true;
+  frontWallLeft.receiveShadow = true;
+  store.add(frontWallLeft);
+
+  const frontWallRight = new THREE.Mesh(new THREE.BoxGeometry(4.6,4.6,0.4), wallMat);
+  frontWallRight.position.set(6.7,2.3,6);
+  frontWallRight.castShadow = true;
+  frontWallRight.receiveShadow = true;
+  store.add(frontWallRight);
+
+  const frontTop = new THREE.Mesh(new THREE.BoxGeometry(4.8,1.3,0.4), wallMat);
+  frontTop.position.set(0,4.0,6);
+  frontTop.castShadow = true;
+  frontTop.receiveShadow = true;
+  store.add(frontTop);
+
+  const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(4.8,0.35,0.45), darkWallMat);
+  doorFrame.position.set(0,0.18,6);
+  store.add(doorFrame);
+
+  const leftDoor = new THREE.Mesh(new THREE.BoxGeometry(1.8,3.0,0.08), glassMat);
+  const rightDoor = new THREE.Mesh(new THREE.BoxGeometry(1.8,3.0,0.08), glassMat);
+  leftDoor.position.set(-1.85,1.5,6.02);
+  rightDoor.position.set(1.85,1.5,6.02);
+  leftDoor.castShadow = true;
+  rightDoor.castShadow = true;
+  store.add(leftDoor, rightDoor);
+
+  const welcomeMat = new THREE.Mesh(
+    new THREE.BoxGeometry(3.5,0.04,2.0),
+    new THREE.MeshStandardMaterial({ color:0x2b2b2b, roughness:1.0 })
+  );
+  welcomeMat.position.set(0,0.22,4.7);
+  store.add(welcomeMat);
+
+  const leftWindow = new THREE.Mesh(new THREE.BoxGeometry(3.4,2.1,0.08), glassMat);
+  leftWindow.position.set(-4.6,1.95,6.02);
+  store.add(leftWindow);
+
+  const rightWindow = new THREE.Mesh(new THREE.BoxGeometry(3.4,2.1,0.08), glassMat);
+  rightWindow.position.set(4.6,1.95,6.02);
+  store.add(rightWindow);
+
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(18.8,0.5,12.8), roofMat);
+  roof.position.set(0,4.85,0);
+  roof.castShadow = true;
+  roof.receiveShadow = true;
+  store.add(roof);
+
+  const stripeBlue = new THREE.Mesh(new THREE.BoxGeometry(18.6,0.45,0.2), signBlueMat);
+  stripeBlue.position.set(0,3.45,6.18);
+  store.add(stripeBlue);
+
+  const stripeOrange = new THREE.Mesh(new THREE.BoxGeometry(18.6,0.28,0.2), signOrangeMat);
+  stripeOrange.position.set(0,3.83,6.19);
+  store.add(stripeOrange);
+
+  const signBoard = new THREE.Mesh(new THREE.BoxGeometry(6.8,1.4,0.22), signOrangeMat);
+  signBoard.position.set(0,5.6,6.18);
+  signBoard.castShadow = true;
+  store.add(signBoard);
+
+  const signInset = new THREE.Mesh(new THREE.BoxGeometry(6.1,0.92,0.12), signBlueMat);
+  signInset.position.set(0,5.6,6.31);
+  store.add(signInset);
+
+  const signLetters = [
+    { x:-2.1, s:0.55 }, { x:-1.05, s:0.55 }, { x:0, s:0.55 }, { x:1.05, s:0.55 }, { x:2.1, s:0.55 }
+  ];
+  for (const letter of signLetters) {
+    const block = new THREE.Mesh(new THREE.BoxGeometry(letter.s, 0.58, 0.14), new THREE.MeshStandardMaterial({
+      color:0xffffff,
+      emissive:0xf6f6f6,
+      emissiveIntensity:0.18,
+      roughness:0.5
+    }));
+    block.position.set(letter.x, 5.6, 6.42);
+    store.add(block);
+  }
+
+  const shelfMat = new THREE.MeshStandardMaterial({ color:0x5d4a38, roughness:0.85 });
+  const snackMat = new THREE.MeshStandardMaterial({ color:0xd8b15a, roughness:0.8 });
+  const coolerMat = new THREE.MeshStandardMaterial({ color:0xd7e5ed, roughness:0.42, metalness:0.2 });
+
+  function addShelfRun(x, z, width, depth, levels) {
+    const shelfGroup = new THREE.Group();
+    shelfGroup.position.set(x,0,z);
+
+    for (let row=0; row<levels; row++) {
+      const shelf = new THREE.Mesh(new THREE.BoxGeometry(width,0.16,depth), shelfMat);
+      shelf.position.set(0,0.9 + row*0.9,0);
+      shelf.castShadow = true;
+      shelf.receiveShadow = true;
+      shelfGroup.add(shelf);
+    }
+
+    const legGeo = new THREE.BoxGeometry(0.12,2.6,0.12);
+    for (const lx of [-width*0.45, width*0.45]) {
+      for (const lz of [-depth*0.35, depth*0.35]) {
+        const leg = new THREE.Mesh(legGeo, darkWallMat);
+        leg.position.set(lx,1.25,lz);
+        shelfGroup.add(leg);
+      }
+    }
+
+    const snackGeo = new THREE.BoxGeometry(0.34,0.25,0.26);
+    for (let i=0; i<Math.max(4, Math.floor(width*2)); i++) {
+      for (let row=0; row<levels-1; row++) {
+        const snack = new THREE.Mesh(snackGeo, snackMat.clone());
+        snack.material.color.offsetHSL((Math.random()-0.5)*0.25, 0, (Math.random()-0.5)*0.1);
+        snack.position.set(
+          -width*0.42 + (i / Math.max(1, Math.floor(width*2)-1)) * width*0.84,
+          1.15 + row*0.9,
+          (Math.random()-0.5) * depth*0.5
+        );
+        shelfGroup.add(snack);
+      }
+    }
+
+    store.add(shelfGroup);
+    addBoxCollider(baseX + x, baseZ - 6 + z, width * 0.5, depth * 0.5);
+  }
+
+  addShelfRun(-4.4, -1.2, 4.8, 1.2, 3);
+  addShelfRun(0, -1.2, 4.8, 1.2, 3);
+  addShelfRun(4.4, -1.2, 4.8, 1.2, 3);
+  addShelfRun(-5.6, -4.2, 2.2, 1.0, 3);
+  addShelfRun(5.6, -4.2, 2.2, 1.0, 3);
+
+  const counter = new THREE.Mesh(new THREE.BoxGeometry(5.5,1.2,1.2), darkWallMat);
+  counter.position.set(4,0.8,2.2);
+  counter.castShadow = true;
+  counter.receiveShadow = true;
+  store.add(counter);
+
+  const register = new THREE.Mesh(new THREE.BoxGeometry(0.9,0.4,0.8), pumpDarkMat);
+  register.position.set(5.2,1.5,2.1);
+  register.castShadow = true;
+  store.add(register);
+
+  const backCooler = new THREE.Mesh(new THREE.BoxGeometry(7.8,3.3,1.3), coolerMat);
+  backCooler.position.set(0,1.65,-5.1);
+  backCooler.castShadow = true;
+  backCooler.receiveShadow = true;
+  store.add(backCooler);
+
+  const coolerDoorMat = glassMat.clone();
+  coolerDoorMat.opacity = 0.28;
+  for (let i=-1; i<=1; i++) {
+    const door = new THREE.Mesh(new THREE.BoxGeometry(2.2,2.8,0.06), coolerDoorMat);
+    door.position.set(i * 2.45,1.65,-4.42);
+    store.add(door);
+  }
+
+  const freezer = new THREE.Mesh(new THREE.BoxGeometry(3.2,1.05,1.4), coolerMat);
+  freezer.position.set(-6.3,0.6,3.2);
+  freezer.castShadow = true;
+  freezer.receiveShadow = true;
+  store.add(freezer);
+
+  const coffeeCounter = new THREE.Mesh(new THREE.BoxGeometry(3.6,1.0,1.15), shelfMat);
+  coffeeCounter.position.set(-5.3,0.72,2.5);
+  coffeeCounter.castShadow = true;
+  coffeeCounter.receiveShadow = true;
+  store.add(coffeeCounter);
+
+  for (let i=0; i<3; i++) {
+    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.14,0.12,0.28,10), new THREE.MeshStandardMaterial({ color:0xf5f5f5, roughness:0.8 }));
+    cup.position.set(-6.0 + i*0.55,1.3,2.45 + (Math.random()-0.5)*0.15);
+    store.add(cup);
+  }
+
+  const posterColors = [0xe3562a, 0x3fa7d6, 0x5ebd76];
+  for (let i=0; i<3; i++) {
+    const poster = new THREE.Mesh(
+      new THREE.BoxGeometry(1.2,1.5,0.05),
+      new THREE.MeshStandardMaterial({ color:posterColors[i], emissive:posterColors[i], emissiveIntensity:0.08, roughness:0.7 })
+    );
+    poster.position.set(-8.72,2.4,-3 + i*2.9);
+    store.add(poster);
+  }
+
+  for (let i=0; i<4; i++) {
+    const light = new THREE.Mesh(new THREE.BoxGeometry(2.2,0.12,0.7), warmLightMat);
+    light.position.set(-6 + i*4,4.45,0.3);
+    store.add(light);
+  }
+
+  g.add(store);
+
+  const canopy = new THREE.Group();
+  canopy.position.set(0,0,9);
+
+  const canopyTop = new THREE.Mesh(new THREE.BoxGeometry(24,0.7,10), roofMat);
+  canopyTop.position.set(0,5.3,0);
+  canopyTop.castShadow = true;
+  canopyTop.receiveShadow = true;
+  canopy.add(canopyTop);
+
+  const canopyBlue = new THREE.Mesh(new THREE.BoxGeometry(24.2,0.42,1.0), signBlueMat);
+  canopyBlue.position.set(0,5.0,4.55);
+  canopy.add(canopyBlue);
+
+  const canopyOrange = new THREE.Mesh(new THREE.BoxGeometry(24.2,0.24,1.0), signOrangeMat);
+  canopyOrange.position.set(0,5.33,4.55);
+  canopy.add(canopyOrange);
+
+  const postGeo = new THREE.BoxGeometry(0.7,5,0.7);
+  const postPos = [
+    [-8,2.5,-2.8],
+    [8,2.5,-2.8],
+    [-8,2.5,2.8],
+    [8,2.5,2.8]
+  ];
+  for (const p of postPos) {
+    const post = new THREE.Mesh(postGeo, concreteMat);
+    post.position.set(p[0],p[1],p[2]);
+    post.castShadow = true;
+    post.receiveShadow = true;
+    canopy.add(post);
+  }
+
+  g.add(canopy);
+
+  function addPump(x, z) {
+    const pump = new THREE.Group();
+
+    const island = new THREE.Mesh(new THREE.BoxGeometry(2.8,0.22,1.8), concreteMat);
+    island.position.y = 0.11;
+    pump.add(island);
+
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.0,2.2,0.9), pumpRedMat);
+    body.position.set(0,1.2,0);
+    body.castShadow = true;
+    body.receiveShadow = true;
+    pump.add(body);
+
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(0.54,0.48,0.06), glassMat);
+    panel.position.set(0,1.7,0.47);
+    pump.add(panel);
+
+    const nozzleBox = new THREE.Mesh(new THREE.BoxGeometry(0.22,0.7,0.22), pumpDarkMat);
+    nozzleBox.position.set(0.42,1.4,0);
+    pump.add(nozzleBox);
+
+    const hosePoints = [
+      new THREE.Vector3(0.42,1.35,0),
+      new THREE.Vector3(0.82,1.1,0.15),
+      new THREE.Vector3(0.65,0.65,0.35)
+    ];
+    const hoseCurve = new THREE.CatmullRomCurve3(hosePoints);
+    const hose = new THREE.Mesh(
+      new THREE.TubeGeometry(hoseCurve, 10, 0.045, 6, false),
+      pumpDarkMat
+    );
+    pump.add(hose);
+
+    const topLight = new THREE.Mesh(new THREE.BoxGeometry(1.1,0.2,1.0), signOrangeMat);
+    topLight.position.set(0,2.35,0);
+    pump.add(topLight);
+
+    pump.position.set(x,0,z);
+    g.add(pump);
+
+    addBoxCollider(baseX + x, baseZ + z, 1.5, 1.0);
+  }
+
+  addPump(-4.5, 9);
+  addPump(4.5, 9);
+  addPump(-4.5, 13);
+  addPump(4.5, 13);
+
+  const dumpster = new THREE.Group();
+  const dumpsterBody = new THREE.Mesh(new THREE.BoxGeometry(3.0,1.8,1.8), new THREE.MeshStandardMaterial({ color:0x2b6f44, roughness:0.9 }));
+  dumpsterBody.position.y = 0.9;
+  dumpsterBody.castShadow = true;
+  dumpsterBody.receiveShadow = true;
+  dumpster.add(dumpsterBody);
+
+  const dumpsterLid = new THREE.Mesh(new THREE.BoxGeometry(3.2,0.18,1.9), metalMat);
+  dumpsterLid.position.y = 1.85;
+  dumpsterLid.rotation.z = 0.08;
+  dumpster.add(dumpsterLid);
+  dumpster.position.set(-12,0,-1);
+  g.add(dumpster);
+
+  scene.add(g);
+
+  addBoxColliderMinMax(baseX - 9.4, baseX + 9.4, baseZ - 12.7, baseZ - 11.3);
+  addBoxColliderMinMax(baseX - 9.6, baseX - 8.4, baseZ - 12.3, baseZ + 0.2);
+  addBoxColliderMinMax(baseX + 8.4, baseX + 9.6, baseZ - 12.3, baseZ + 0.2);
+  addBoxColliderMinMax(baseX - 9.2, baseX - 2.4, baseZ - 0.4, baseZ + 0.8);
+  addBoxColliderMinMax(baseX + 2.4, baseX + 9.2, baseZ - 0.4, baseZ + 0.8);
+  addBoxCollider(baseX + 4.0, baseZ - 3.8, 2.9, 0.8);
+  addBoxCollider(baseX, baseZ - 11.1, 4.1, 0.8);
+  addBoxCollider(baseX - 5.3, baseZ - 3.5, 2.0, 0.75);
+  addBoxCollider(baseX - 6.3, baseZ - 2.8, 1.8, 0.8);
+  addBoxCollider(baseX, baseZ + 9, 12, 0.8);
+  addBoxCollider(baseX, baseZ + 13, 12, 0.8);
+  addBoxCollider(baseX - 8, baseZ + 9, 0.8, 5.0);
+  addBoxCollider(baseX + 8, baseZ + 9, 0.8, 5.0);
+  addBoxCollider(baseX - 12, baseZ - 1, 1.7, 1.1);
+
+  function spawnLootBox(offsetX, offsetZ, lootData, colors) {
+    const boxGroup = new THREE.Group();
+    const crate = createDetailedLootCrate(colors[0], colors[1]);
+    boxGroup.add(crate);
+
+    const glow = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.8, 0.8, 0.04, 18),
+      new THREE.MeshStandardMaterial({
+        color:0xffc66c,
+        emissive:0xffa433,
+        emissiveIntensity:0.45,
+        transparent:true,
+        opacity:0.32
+      })
+    );
+    glow.position.y = -0.32;
+    boxGroup.add(glow);
+
+    boxGroup.position.set(baseX + offsetX,0.72,baseZ + offsetZ);
+    boxGroup.rotation.y = Math.random() * Math.PI * 2;
+    boxGroup.userData = {
+      type:"lootbox",
+      opened:false,
+      loot:lootData
+    };
+    scene.add(boxGroup);
+    interactables.push(boxGroup);
+    lootBoxes.push(boxGroup);
+
+    addBoxCollider(baseX + offsetX, baseZ + offsetZ, 0.9, 0.7);
+  }
+
+  spawnLootBox(-6.2, 4.2, [
+    { item:"wood", count:28 },
+    { item:"stone", count:12 },
+    { item:"scrap", count:18 },
+    { item:"meat", count:1 }
+  ], [0x7b4a22, 0x3e2b18]);
+
+  spawnLootBox(6.5, 3.6, [
+    { item:"stone", count:26 },
+    { item:"wood", count:14 },
+    { item:"scrap", count:24 }
+  ], [0x91521f, 0x2b2b2b]);
+
+  spawnLootBox(-5.3,-5.1, [
+    { item:"wood", count:18 },
+    { item:"stone", count:18 },
+    { item:"scrap", count:32 },
+    { item:"meat", count:2 }
+  ], [0x6c4427, 0x4d4d4d]);
+
+  spawnLootBox(5.5,-4.5, [
+    { item:"stone", count:22 },
+    { item:"wood", count:20 },
+    { item:"scrap", count:27 }
+  ], [0x845531, 0x3c2d25]);
+}
+
+spawnOxumsGasStation();
+
+/* ---------------------------------------------------------
+   BIOME WORLD GENERATION
+--------------------------------------------------------- */
+function generateWorldBiomes() {
+  const radius = 160;
+  const cellSize = 70;
+  const half = radius;
+
+  for (let gx = -half; gx < half; gx += cellSize) {
+    for (let gz = -half; gz < half; gz += cellSize) {
+
+      const centerX = gx + (Math.random()-0.5)*cellSize*0.4;
+      const centerZ = gz + (Math.random()-0.5)*cellSize*0.4;
+      const zone = getBiomeAt(centerX, centerZ);
+
+      if (zone === "water" || zone === "beach") continue;
+
+      let biomeType = zone === "snow" ? "forest" : zone === "desert" ? "plains" : (Math.random() < 0.62 ? "forest" : "plains");
+
+      if (Math.abs(centerX - worldLayout.oxums.x) < 38 && Math.abs(centerZ - worldLayout.oxums.z) < 32) continue;
+
+      if (biomeType === "forest") {
+        const treeCount = 12 + Math.floor(Math.random()*6);
+        const rockCount = Math.floor(Math.random()*2);
+        const boarCount = Math.floor(Math.random()*2);
+        const deerCount = 1 + Math.floor(Math.random()*2);
+        const grassCount = 3 + Math.floor(Math.random()*3);
+
+        for (let i=0;i<treeCount;i++) {
+          const x = centerX + (Math.random()-0.5)*cellSize*0.7;
+          const z = centerZ + (Math.random()-0.5)*cellSize*0.7;
+          spawnTree(x,z);
+        }
+        for (let i=0;i<rockCount;i++) {
+          const x = centerX + (Math.random()-0.5)*cellSize*0.6;
+          const z = centerZ + (Math.random()-0.5)*cellSize*0.6;
+          spawnRock(x,z);
+        }
+        for (let i=0;i<boarCount;i++) {
+          const x = centerX + (Math.random()-0.5)*cellSize*0.8;
+          const z = centerZ + (Math.random()-0.5)*cellSize*0.8;
+          spawnAnimal(x,z,"boar");
+        }
+        for (let i=0;i<deerCount;i++) {
+          const x = centerX + (Math.random()-0.5)*cellSize*0.8;
+          const z = centerZ + (Math.random()-0.5)*cellSize*0.8;
+          spawnAnimal(x,z,"deer");
+        }
+        for (let i=0;i<grassCount;i++) {
+          const x = centerX + (Math.random()-0.5)*cellSize*0.95;
+          const z = centerZ + (Math.random()-0.5)*cellSize*0.95;
+          spawnGrassPatch(x,z, 3 + Math.floor(Math.random()*3));
+        }
+
+      } else {
+        const treeCount = 4 + Math.floor(Math.random()*3);
+        const rockCount = Math.floor(Math.random()*2);
+        const boarCount = Math.floor(Math.random()*2);
+        const deerCount = Math.floor(Math.random()*2);
+        const bearCount = Math.random() < 0.2 ? 1 : 0;
+        const grassCount = 1 + Math.floor(Math.random()*2);
+
+        for (let i=0;i<treeCount;i++) {
+          const x = centerX + (Math.random()-0.5)*cellSize*0.8;
+          const z = centerZ + (Math.random()-0.5)*cellSize*0.8;
+          spawnTree(x,z);
+        }
+        for (let i=0;i<rockCount;i++) {
+          const x = centerX + (Math.random()-0.5)*cellSize*0.9;
+          const z = centerZ + (Math.random()-0.5)*cellSize*0.9;
+          spawnRock(x,z);
+        }
+        for (let i=0;i<boarCount;i++) {
+          const x = centerX + (Math.random()-0.5)*cellSize*0.9;
+          const z = centerZ + (Math.random()-0.5)*cellSize*0.9;
+          spawnAnimal(x,z,"boar");
+        }
+        for (let i=0;i<deerCount;i++) {
+          const x = centerX + (Math.random()-0.5)*cellSize*0.9;
+          const z = centerZ + (Math.random()-0.5)*cellSize*0.9;
+          spawnAnimal(x,z,"deer");
+        }
+        for (let i=0;i<bearCount;i++) {
+          const x = centerX + (Math.random()-0.5)*cellSize*0.8;
+          const z = centerZ + (Math.random()-0.5)*cellSize*0.8;
+          spawnAnimal(x,z,"bear");
+        }
+        for (let i=0;i<grassCount;i++) {
+          const x = centerX + (Math.random()-0.5)*cellSize*0.95;
+          const z = centerZ + (Math.random()-0.5)*cellSize*0.95;
+          spawnGrassPatch(x,z, 2 + Math.floor(Math.random()*2));
+        }
+      }
+    }
+  }
+}
+
+function startWorldGeneration() {
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      try {
+        generateWorldBiomes();
+      } catch (err) {
+        showErrorOverlay(err);
+      }
+    }, 50);
+  });
+}
+
+/* ---------------------------------------------------------
+--------------------------------------------------------- */
+const MAX_STACK = 100;
+const SLOT_COUNT = 21;
+const HOTBAR_SLOTS = 6;
+
+const slots = [];
+for (let i=0;i<SLOT_COUNT;i++) {
+  slots.push({ item:null, count:0 });
+}
+
+const lootSlots = [];
+const LOOT_SLOT_COUNT = 12;
+for (let i=0;i<LOOT_SLOT_COUNT;i++) {
+  lootSlots.push({ item:null, count:0 });
+}
+
+let selectedHotbar = 0;
+
+const hotbarDiv = document.getElementById("hotbar");
+const inventoryGrid = document.getElementById("inventoryGrid");
+const inventoryPanel = document.getElementById("inventoryPanel");
+const lootPanel = document.getElementById("lootPanel");
+const lootGrid = document.getElementById("lootGrid");
+const dragItemDiv = document.getElementById("dragItem");
+const buildHint = document.getElementById("buildHint");
+const inventoryTabBtn = document.getElementById("inventoryTabBtn");
+const craftingTabBtn = document.getElementById("craftingTabBtn");
+const inventoryPage = document.getElementById("inventoryPage");
+const craftingPage = document.getElementById("craftingPage");
+const craftingGrid = document.getElementById("craftingGrid");
+const craftQueueText = document.getElementById("craftQueueText");
+const craftProgressFill = document.getElementById("craftProgressFill");
+const buildMenu = document.getElementById("buildMenu");
+const inventorySlotEls = [];
+const lootSlotEls = [];
+
+const recipes = [
+  { id:"axe", name:"Stone Axe", time:5, produces:{ item:"axe", count:1 }, costs:[{ item:"wood", count:3 }, { item:"stone", count:2 }] },
+  { id:"pickaxe", name:"Stone Pickaxe", time:5, produces:{ item:"pickaxe", count:1 }, costs:[{ item:"wood", count:3 }, { item:"stone", count:3 }] },
+  { id:"building_plan", name:"Building Plan", time:5, produces:{ item:"building_plan", count:1 }, costs:[{ item:"wood", count:20 }, { item:"scrap", count:5 }] },
+  { id:"hammer", name:"Hammer", time:5, produces:{ item:"hammer", count:1 }, costs:[{ item:"wood", count:15 }, { item:"stone", count:10 }] },
+  { id:"single_wood_door", name:"Single Wood Door", time:5, produces:{ item:"single_wood_door", count:1 }, costs:[{ item:"wood", count:20 }] },
+  { id:"double_wood_door", name:"Double Wood Door", time:5, produces:{ item:"double_wood_door", count:1 }, costs:[{ item:"wood", count:35 }] }
+];
+
+const buildPieces = [
+  { id:"foundation", name:"Foundation", costs:[{ item:"wood", count:30 }], size:{ x:4, y:1, z:4 }, category:"structural", socket:"floor" },
+  { id:"floor", name:"Floor", costs:[{ item:"wood", count:25 }], size:{ x:4, y:0.5, z:4 }, category:"structural", socket:"floor" },
+  { id:"ceiling", name:"Ceiling", costs:[{ item:"wood", count:25 }], size:{ x:4, y:0.5, z:4 }, category:"structural", socket:"floor" },
+  { id:"wall", name:"Wall", costs:[{ item:"wood", count:20 }], size:{ x:4, y:3, z:0.35 }, category:"wall", socket:"wall" },
+  { id:"single_door_frame", name:"Single Door Frame", costs:[{ item:"wood", count:25 }], size:{ x:4, y:3, z:0.35 }, category:"wall", socket:"wall", doorType:"single" },
+  { id:"double_door_frame", name:"Double Door Frame", costs:[{ item:"wood", count:35 }], size:{ x:4, y:3, z:0.35 }, category:"wall", socket:"wall", doorType:"double" },
+  { id:"single_wood_door", name:"Single Wood Door", costs:[{ item:"single_wood_door", count:1 }], size:{ x:1.7, y:2.7, z:0.14 }, category:"door", doorType:"single" },
+  { id:"double_wood_door", name:"Double Wood Door", costs:[{ item:"double_wood_door", count:1 }], size:{ x:3.3, y:2.7, z:0.14 }, category:"door", doorType:"double" }
+];
+
+const placedBuilds = [];
+let activeCraft = null;
+const buildPreview = new THREE.Group();
+buildPreview.visible = false;
+scene.add(buildPreview);
+
+function createUISlots() {
+  for (let i=0;i<HOTBAR_SLOTS;i++) {
+    const s = document.createElement("div");
+    s.className = "slot";
+    s.dataset.index = i;
+    s.dataset.container = "inventory";
+    const label = document.createElement("div");
+    label.textContent = (i+1);
+    label.style.position = "absolute";
+    label.style.top = "2px";
+    label.style.left = "4px";
+    label.style.fontSize = "9px";
+    s.appendChild(label);
+    const iconDiv = document.createElement("div");
+    iconDiv.className = "icon";
+    s.appendChild(iconDiv);
+    const nameDiv = document.createElement("div");
+    nameDiv.className = "name";
+    s.appendChild(nameDiv);
+    const countDiv = document.createElement("div");
+    countDiv.className = "count";
+    s.appendChild(countDiv);
+    hotbarDiv.appendChild(s);
+    inventorySlotEls[i] = s;
+  }
+
+  for (let i=HOTBAR_SLOTS;i<SLOT_COUNT;i++) {
+    const s = document.createElement("div");
+    s.className = "slot";
+    s.dataset.index = i;
+    s.dataset.container = "inventory";
+    const iconDiv = document.createElement("div");
+    iconDiv.className = "icon";
+    s.appendChild(iconDiv);
+    const nameDiv = document.createElement("div");
+    nameDiv.className = "name";
+    s.appendChild(nameDiv);
+    const countDiv = document.createElement("div");
+    countDiv.className = "count";
+    s.appendChild(countDiv);
+    inventoryGrid.appendChild(s);
+    inventorySlotEls[i] = s;
+  }
+
+  for (let i=0;i<LOOT_SLOT_COUNT;i++) {
+    const s = document.createElement("div");
+    s.className = "lootSlot";
+    s.dataset.index = i;
+    s.dataset.container = "loot";
+    const iconDiv = document.createElement("div");
+    iconDiv.className = "icon";
+    s.appendChild(iconDiv);
+    const nameDiv = document.createElement("div");
+    nameDiv.className = "name";
+    s.appendChild(nameDiv);
+    const countDiv = document.createElement("div");
+    countDiv.className = "count";
+    s.appendChild(countDiv);
+    lootGrid.appendChild(s);
+    lootSlotEls[i] = s;
+  }
+}
+
+createUISlots();
+inventoryTabBtn.addEventListener("click", () => setInventoryTab("inventory"));
+craftingTabBtn.addEventListener("click", () => setInventoryTab("crafting"));
+
+function itemName(id) {
+  if (id === "wood") return "Wood";
+  if (id === "stone") return "Stone";
+  if (id === "meat") return "Meat";
+  if (id === "scrap") return "Scrap";
+  if (id === "axe") return "Axe";
+  if (id === "pickaxe") return "Pickaxe";
+  if (id === "building_plan") return "Plan";
+  if (id === "hammer") return "Hammer";
+  if (id === "single_wood_door") return "Single Door";
+  if (id === "double_wood_door") return "Double Door";
+  return "";
+}
+
+function itemIcon(id) {
+  if (id === "wood") return "🪵";
+  if (id === "stone") return "🪨";
+  if (id === "meat") return "🥩";
+  if (id === "scrap") return "⚙️";
+  if (id === "axe") return "🪓";
+  if (id === "pickaxe") return "⛏️";
+  if (id === "building_plan") return "📘";
+  if (id === "hammer") return "🔨";
+  return "";
+}
+
+const healthSpan = document.getElementById("health");
+const hungerSpan = document.getElementById("hunger");
+const waterSpan = document.getElementById("water");
+
+function updatePanelLayout() {
+  const invVisible = inventoryOpen || lootOpen;
+  inventoryPanel.style.display = invVisible ? "flex" : "none";
+  lootPanel.style.display = lootOpen ? "flex" : "none";
+
+  if (lootOpen) {
+    inventoryPanel.style.left = "calc(50% - 220px)";
+    lootPanel.style.left = "calc(50% + 170px)";
+  } else {
+    inventoryPanel.style.left = "50%";
+    lootPanel.style.left = "50%";
+  }
+}
+
+function refreshInventoryUI() {
+  inventorySlotEls.forEach(el => {
+    const idx = parseInt(el.dataset.index,10);
+    const slot = slots[idx];
+    const iconDiv = el.querySelector(".icon");
+    const nameDiv = el.querySelector(".name");
+    const countDiv = el.querySelector(".count");
+    if (slot.item) {
+      iconDiv.textContent = itemIcon(slot.item);
+      nameDiv.textContent = itemName(slot.item);
+      countDiv.textContent = slot.count > 1 ? slot.count : "";
+    } else {
+      iconDiv.textContent = "";
+      nameDiv.textContent = "";
+      countDiv.textContent = "";
+    }
+    if (idx < HOTBAR_SLOTS) {
+      el.classList.toggle("selected", idx === selectedHotbar);
+    }
+  });
+
+  updateHud();
+}
+
+function refreshLootUI() {
+  lootSlotEls.forEach(el => {
+    const idx = parseInt(el.dataset.index,10);
+    const slot = lootSlots[idx];
+    const iconDiv = el.querySelector(".icon");
+    const nameDiv = el.querySelector(".name");
+    const countDiv = el.querySelector(".count");
+    if (slot.item) {
+      iconDiv.textContent = itemIcon(slot.item);
+      nameDiv.textContent = itemName(slot.item);
+      countDiv.textContent = slot.count > 1 ? slot.count : "";
+    } else {
+      iconDiv.textContent = "";
+      nameDiv.textContent = "";
+      countDiv.textContent = "";
+    }
+  });
+}
+
+function updateHud() {
+  healthSpan.textContent = Math.round(player.health);
+  hungerSpan.textContent = Math.round(player.hunger);
+  waterSpan.textContent = Math.round(player.water);
+}
+
+function addItem(type, amount) {
+  while (amount > 0) {
+    for (let i=0;i<SLOT_COUNT && amount>0;i++) {
+      const s = slots[i];
+      if (s.item === type && s.count < MAX_STACK) {
+        const space = MAX_STACK - s.count;
+        const add = Math.min(space, amount);
+        s.count += add;
+        amount -= add;
+      }
+    }
+    if (amount <= 0) break;
+
+    let emptyIndex = -1;
+    for (let i=0;i<SLOT_COUNT;i++) {
+      if (!slots[i].item) { emptyIndex = i; break; }
+    }
+    if (emptyIndex === -1) break;
+    const add = Math.min(MAX_STACK, amount);
+    slots[emptyIndex].item = type;
+    slots[emptyIndex].count = add;
+    amount -= add;
+  }
+  refreshInventoryUI();
+  renderCraftingRecipes();
+}
+
+function removeItem(type, amount) {
+  for (let i=0;i<SLOT_COUNT;i++) {
+    const s = slots[i];
+    if (s.item === type) {
+      const take = Math.min(s.count, amount);
+      s.count -= take;
+      amount -= take;
+      if (s.count <= 0) {
+        s.item = null;
+        s.count = 0;
+      }
+      if (amount <= 0) break;
+    }
+  }
+  refreshInventoryUI();
+  renderCraftingRecipes();
+}
+
+function totalOf(type) {
+  let t = 0;
+  for (const s of slots) if (s.item === type) t += s.count;
+  return t;
+}
+
+function hasRecipeCosts(recipe) {
+  return recipe.costs.every(cost => totalOf(cost.item) >= cost.count);
+}
+
+function setInventoryTab(tab) {
+  activeInventoryTab = tab;
+  inventoryTabBtn.classList.toggle("active", tab === "inventory");
+  craftingTabBtn.classList.toggle("active", tab === "crafting");
+  inventoryPage.classList.toggle("active", tab === "inventory");
+  craftingPage.classList.toggle("active", tab === "crafting");
+}
+
+function updateCraftQueueUI() {
+  if (!activeCraft) {
+    craftQueueText.textContent = "No item crafting";
+    craftProgressFill.style.width = "0%";
+    return;
+  }
+
+  const elapsed = performance.now() - activeCraft.startedAt;
+  const progress = Math.min(elapsed / (activeCraft.time * 1000), 1);
+  craftQueueText.textContent = "Crafting " + activeCraft.name + "... " + Math.ceil(Math.max(0, activeCraft.time - elapsed / 1000)) + "s";
+  craftProgressFill.style.width = (progress * 100).toFixed(0) + "%";
+}
+
+function renderCraftingRecipes() {
+  craftingGrid.innerHTML = "";
+  for (const recipe of recipes) {
+    const card = document.createElement("button");
+    card.className = "recipeCard";
+    const canCraft = hasRecipeCosts(recipe) && !activeCraft;
+    if (!canCraft) card.classList.add("disabled");
+
+    const costs = recipe.costs.map(cost => itemName(cost.item) + " x" + cost.count).join(", ");
+    card.innerHTML = `
+      <div class="recipeTitle">${recipe.name}</div>
+      <div class="recipeMeta">Craft time: ${recipe.time}s</div>
+      <div class="recipeMeta">Cost: ${costs}</div>
+    `;
+    card.addEventListener("click", () => {
+      if (!hasRecipeCosts(recipe) || activeCraft) return;
+      for (const cost of recipe.costs) removeItem(cost.item, cost.count);
+      activeCraft = {
+        id: recipe.id,
+        name: recipe.name,
+        time: recipe.time,
+        startedAt: performance.now(),
+        produces: recipe.produces
+      };
+      updateCraftQueueUI();
+      renderCraftingRecipes();
+    });
+    craftingGrid.appendChild(card);
+  }
+}
+
+function finishCraftingIfReady() {
+  if (!activeCraft) return;
+  const elapsed = performance.now() - activeCraft.startedAt;
+  if (elapsed < activeCraft.time * 1000) return;
+  addItem(activeCraft.produces.item, activeCraft.produces.count);
+  activeCraft = null;
+  updateCraftQueueUI();
+  renderCraftingRecipes();
+}
+
+function costsText(costs) {
+  return costs.map(cost => itemName(cost.item) + " x" + cost.count).join(", ");
+}
+
+function getBuildPiece(id) {
+  return buildPieces.find(piece => piece.id === id) || null;
+}
+
+function createBuildMaterial(color, preview = false, extra = {}) {
+  if (preview) {
+    return new THREE.MeshStandardMaterial({
+      color:0x76c6ff,
+      transparent:true,
+      opacity:0.42,
+      emissive:0x2a78a8,
+      emissiveIntensity:0.9,
+      roughness:0.35,
+      metalness:0.0,
+      depthWrite:false,
+      ...extra
+    });
+  }
+  return new THREE.MeshStandardMaterial({
+    color,
+    roughness:0.88,
+    metalness:0.05,
+    ...extra
+  });
+}
+
+function createBuildVisual(piece, tier = "twig", preview = false) {
+  const group = new THREE.Group();
+  const highlightMeshes = [];
+  const addMesh = (geo, mat, x=0, y=0, z=0, rx=0, ry=0, rz=0) => {
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    mesh.rotation.set(rx, ry, rz);
+    mesh.castShadow = !preview;
+    mesh.receiveShadow = !preview;
+    group.add(mesh);
+    highlightMeshes.push(mesh);
+    return mesh;
+  };
+
+  const mats = preview ? {
+    panel: createBuildMaterial(0x76c6ff, true),
+    beam: createBuildMaterial(0x76c6ff, true),
+    detail: createBuildMaterial(0x9de0ff, true)
+  } : tier === "stone" ? {
+    panel: createBuildMaterial(0x62574d, false, { roughness:1.0 }),
+    beam: createBuildMaterial(0x4e4741, false, { roughness:1.0 }),
+    detail: createBuildMaterial(0x7a6f62, false, { roughness:0.98 })
+  } : tier === "wood" ? {
+    panel: createBuildMaterial(0x4f3325, false, { roughness:0.92 }),
+    beam: createBuildMaterial(0x6b4b35, false, { roughness:0.88 }),
+    detail: createBuildMaterial(0x866148, false, { roughness:0.84 })
+  } : {
+    panel: createBuildMaterial(0x6a5137, false, { roughness:0.96 }),
+    beam: createBuildMaterial(0x7d6144, false, { roughness:0.95 }),
+    detail: createBuildMaterial(0x9b7b59, false, { roughness:0.92 })
+  };
+
+  const isFrame = piece.id === "single_door_frame" || piece.id === "double_door_frame";
+  const isWallLike = piece.id === "wall" || isFrame;
+  const openingWidth = piece.id === "double_door_frame" ? 3.0 : 1.65;
+
+  if (piece.id === "foundation") {
+    addMesh(new THREE.BoxGeometry(4, 0.9, 4), mats.panel, 0, 0.45, 0);
+    addMesh(new THREE.BoxGeometry(3.8, 0.2, 3.8), mats.beam, 0, 0.95, 0);
+    for (const x of [-1.35, 1.35]) addMesh(new THREE.BoxGeometry(0.18, 0.9, 3.7), mats.beam, x, 0.45, 0);
+    for (const z of [-1.35, 1.35]) addMesh(new THREE.BoxGeometry(3.7, 0.9, 0.18), mats.beam, 0, 0.45, z);
+    return { group, highlightMeshes };
+  }
+
+  if (piece.id === "floor" || piece.id === "ceiling") {
+    addMesh(new THREE.BoxGeometry(4, 0.36, 4), mats.panel, 0, 0.18, 0);
+    for (const x of [-1.3, 0, 1.3]) addMesh(new THREE.BoxGeometry(0.16, 0.28, 3.8), mats.beam, x, 0.18, 0);
+    for (const z of [-1.3, 1.3]) addMesh(new THREE.BoxGeometry(3.8, 0.28, 0.16), mats.beam, 0, 0.18, z);
+    return { group, highlightMeshes };
+  }
+
+  if (isWallLike && tier === "twig") {
+    const postPositions = isFrame ? [-1.78, -1.54, 1.54, 1.78] : [-1.62, -1.28, -0.96, -0.62, -0.28, 0.06, 0.38, 0.74, 1.08, 1.42, 1.7];
+    for (const x of postPositions) addMesh(new THREE.CylinderGeometry(0.055, 0.08, 2.92, 5), mats.panel, x, 1.5, (Math.random()-0.5)*0.03, 0, 0, x * 0.05);
+    addMesh(new THREE.BoxGeometry(3.88, 0.16, 0.16), mats.beam, 0, 0.34, 0);
+    addMesh(new THREE.BoxGeometry(3.88, 0.16, 0.16), mats.beam, 0, 1.48, 0);
+    addMesh(new THREE.BoxGeometry(3.88, 0.16, 0.16), mats.beam, 0, 2.62, 0);
+    if (isFrame) {
+      addMesh(new THREE.BoxGeometry(0.22, 3.0, 0.18), mats.beam, -1.78, 1.5, 0);
+      addMesh(new THREE.BoxGeometry(0.22, 3.0, 0.18), mats.beam, 1.78, 1.5, 0);
+      addMesh(new THREE.BoxGeometry(4.0, 0.2, 0.18), mats.beam, 0, 2.82, 0);
+      addMesh(new THREE.BoxGeometry(4.95, 0.14, 0.16), mats.detail, 0, 1.5, 0, 0, 0, 0.76);
+      addMesh(new THREE.BoxGeometry(4.95, 0.14, 0.16), mats.detail, 0, 1.5, 0, 0, 0, -0.76);
+    } else {
+      addMesh(new THREE.BoxGeometry(5.1, 0.16, 0.18), mats.detail, 0, 1.5, 0, 0, 0, 0.66);
+      addMesh(new THREE.BoxGeometry(5.1, 0.16, 0.18), mats.detail, 0, 1.5, 0, 0, 0, -0.66);
+    }
+    return { group, highlightMeshes };
+  }
+
+  if (isWallLike && tier === "wood") {
+    if (!isFrame) addMesh(new THREE.BoxGeometry(3.72, 2.74, 0.12), mats.panel, 0, 1.5, -0.02);
+    for (let x=-1.56; x<=1.56; x+=0.42) {
+      if (isFrame && Math.abs(x) < openingWidth * 0.5) continue;
+      addMesh(new THREE.BoxGeometry(0.24, 2.86, 0.16), mats.detail, x, 1.5, 0.02);
+    }
+    addMesh(new THREE.BoxGeometry(3.92, 0.18, 0.2), mats.beam, 0, 0.34, 0.04);
+    addMesh(new THREE.BoxGeometry(3.92, 0.18, 0.2), mats.beam, 0, 1.5, 0.04);
+    addMesh(new THREE.BoxGeometry(3.92, 0.18, 0.2), mats.beam, 0, 2.66, 0.04);
+    if (isFrame) {
+      addMesh(new THREE.BoxGeometry(0.26, 3.0, 0.2), mats.beam, -1.78, 1.5, 0.04);
+      addMesh(new THREE.BoxGeometry(0.26, 3.0, 0.2), mats.beam, 1.78, 1.5, 0.04);
+      addMesh(new THREE.BoxGeometry(4.0, 0.22, 0.22), mats.beam, 0, 2.82, 0.04);
+    } else {
+      addMesh(new THREE.BoxGeometry(5.05, 0.16, 0.16), mats.beam, 0, 1.5, 0.08, 0, 0, 0.66);
+      addMesh(new THREE.BoxGeometry(5.05, 0.16, 0.16), mats.beam, 0, 1.5, 0.08, 0, 0, -0.66);
+    }
+    return { group, highlightMeshes };
+  }
+
+  if (isWallLike && tier === "stone") {
+    addMesh(new THREE.BoxGeometry(3.94, 2.98, isFrame ? 0.26 : 0.28), mats.panel, 0, 1.5, 0);
+    const blocks = [
+      [-1.25, 0.48, 0.86, 0.44], [-0.18, 0.46, 0.74, 0.36], [0.96, 0.5, 0.9, 0.42],
+      [-1.48, 1.18, 0.72, 0.34], [-0.52, 1.22, 0.88, 0.4], [0.58, 1.14, 0.8, 0.32], [1.46, 1.24, 0.64, 0.32],
+      [-1.12, 1.92, 0.92, 0.42], [0.08, 1.88, 1.1, 0.42], [1.34, 1.96, 0.84, 0.38], 
+      [-1.46, 2.56, 0.74, 0.28], [-0.28, 2.56, 0.82, 0.3], [0.82, 2.6, 0.9, 0.3], [1.66, 2.58, 0.46, 0.26]
+    ];
+    for (const [x, y, w, h] of blocks) {
+      if (isFrame && Math.abs(x) < openingWidth * 0.5 && y < 2.42) continue;
+      addMesh(new THREE.BoxGeometry(w, h, 0.08), mats.detail, x, y, 0.16);
+    }
+    if (isFrame) {
+      addMesh(new THREE.BoxGeometry(0.34, 3.0, 0.34), mats.beam, -1.82, 1.5, 0);
+      addMesh(new THREE.BoxGeometry(0.34, 3.0, 0.34), mats.beam, 1.82, 1.5, 0);
+      addMesh(new THREE.BoxGeometry(4.0, 0.32, 0.34), mats.beam, 0, 2.84, 0);
+    }
+    return { group, highlightMeshes };
+  }
+
+  addMesh(new THREE.BoxGeometry(piece.size.x, piece.size.y, piece.size.z), mats.panel, 0, piece.category === "wall" ? 1.5 : piece.id === "foundation" ? 0.5 : piece.id === "ceiling" ? 3 : 0.25, 0);
+  return { group, highlightMeshes };
+}
+
+function getLookTargetFrom(objects, maxDist = 7) {
+  ray.setFromCamera({x:0,y:0}, camera);
+  const hits = ray.intersectObjects(objects, true);
+  if (!hits.length || hits[0].distance > maxDist) return null;
+  let obj = hits[0].object;
+  while (obj.parent && obj.parent !== scene && !obj.userData.isPlacedBuild) obj = obj.parent;
+  return obj.userData.isPlacedBuild ? obj : null;
+}
+
+function getTargetedBuild() {
+  const roots = placedBuilds.map(b => b.root);
+  return getLookTargetFrom(roots, 8);
+}
+
+function getTargetedLootBox() {
+  ray.setFromCamera({x:0,y:0}, camera);
+  const hits = ray.intersectObjects(interactables, true);
+  if (!hits.length || hits[0].distance > 6) return null;
+  let obj = hits[0].object;
+  while (obj.parent && obj.parent !== scene) obj = obj.parent;
+  return obj.userData && obj.userData.type === "lootbox" ? obj : null;
+}
+
+function getBuildSnapHit(maxDist = 8) {
+  const roots = placedBuilds.map(b => b.root);
+  ray.setFromCamera({x:0,y:0}, camera);
+  const hits = ray.intersectObjects(roots, true);
+  if (!hits.length || hits[0].distance > maxDist) return null;
+  let obj = hits[0].object;
+  while (obj.parent && obj.parent !== scene && !obj.userData.isPlacedBuild) obj = obj.parent;
+  if (!obj.userData.isPlacedBuild) return null;
+  return { root: obj, point: hits[0].point.clone() };
+}
+
+function getBuildLayer(piece) {
+  if (!piece) return "wall";
+  if (piece.category === "door") return "door";
+  if (piece.id === "ceiling") return "ceiling";
+  if (piece.id === "floor" || piece.id === "foundation") return "floor";
+  return "wall";
+}
+
+function clearBuildHighlight() {
+  if (!highlightedBuild) return;
+  for (const mesh of highlightedBuild.userData.highlightMeshes || []) {
+    mesh.material.emissive?.setHex(mesh.userData.baseEmissive || 0x000000);
+    mesh.material.emissiveIntensity = mesh.userData.baseEmissiveIntensity ?? 0;
+  }
+  highlightedBuild = null;
+}
+
+function setBuildHighlight(build) {
+  if (highlightedBuild === build) return;
+  clearBuildHighlight();
+  if (!build) return;
+  for (const mesh of build.userData.highlightMeshes || []) {
+    mesh.userData.baseEmissive = mesh.material.emissive ? mesh.material.emissive.getHex() : 0x000000;
+    mesh.userData.baseEmissiveIntensity = mesh.material.emissiveIntensity || 0;
+    if (mesh.material.emissive) {
+      mesh.material.emissive.setHex(0x3a9bff);
+      mesh.material.emissiveIntensity = 0.55;
+    }
+  }
+  highlightedBuild = build;
+}
+
+function getBuildPlacement(piece) {
+  const yawSnap = Math.round(player.yaw / (Math.PI * 0.5)) * (Math.PI * 0.5);
+  const offset = new THREE.Vector3(Math.sin(yawSnap), 0, Math.cos(yawSnap)).multiplyScalar(6);
+  const rawX = player.pos.x + offset.x;
+  const rawZ = player.pos.z + offset.z;
+  return {
+    x: Math.round(rawX / 4) * 4,
+    z: Math.round(rawZ / 4) * 4,
+    yaw: yawSnap
+  };
+}
+
+function getNearestPlacedBuild(maxDist = 8) {
+  let nearest = null;
+  let best = maxDist;
+  for (const build of placedBuilds) {
+    if (build.root.userData.isDoor) continue;
+    const dist = new THREE.Vector2(build.root.position.x - player.pos.x, build.root.position.z - player.pos.z).length();
+    if (dist < best) {
+      best = dist;
+      nearest = build;
+    }
+  }
+  return nearest;
+}
+
+function getNearestPlacedBuildTo(x, z, maxDist = 8) {
+  let nearest = null;
+  let best = maxDist;
+  for (const build of placedBuilds) {
+    if (build.root.userData.isDoor) continue;
+    const dx = build.root.position.x - x;
+    const dz = build.root.position.z - z;
+    const dist = Math.sqrt(dx*dx + dz*dz);
+    if (dist < best) {
+      best = dist;
+      nearest = build;
+    }
+  }
+  return nearest;
+}
+
+function isPlacementOccupied(x, z, minDist = 2.4, piece = null) {
+  const targetLayer = getBuildLayer(piece);
+  return placedBuilds.some(build => {
+    const buildLayer = build.layer || getBuildLayer(build.piece);
+    const sameLayer = buildLayer === targetLayer;
+    const floorConflict = (targetLayer === "floor" && buildLayer === "floor");
+    if (!sameLayer && !floorConflict) return false;
+    const dx = build.root.position.x - x;
+    const dz = build.root.position.z - z;
+    return Math.sqrt(dx*dx + dz*dz) < minDist;
+  });
+}
+
+function findAdjacentBuildPlacement(near, rawX, rawZ, yaw, piece) {
+  const options = [
+    { x: near.root.position.x + 4, z: near.root.position.z },
+    { x: near.root.position.x - 4, z: near.root.position.z },
+    { x: near.root.position.x, z: near.root.position.z + 4 },
+    { x: near.root.position.x, z: near.root.position.z - 4 }
+  ];
+
+  options.sort((a, b) => {
+    const da = (a.x - rawX) * (a.x - rawX) + (a.z - rawZ) * (a.z - rawZ);
+    const db = (b.x - rawX) * (b.x - rawX) + (b.z - rawZ) * (b.z - rawZ);
+    return da - db;
+  });
+
+  for (const option of options) {
+    if (!isPlacementOccupied(option.x, option.z, piece.category === "wall" ? 2.2 : 2.8, piece)) {
+      return { x: option.x, z: option.z, y: 0, yaw };
+    }
+  }
+
+  return null;
+}
+
+function computeBuildPlacement(piece) {
+  if (piece.category === "door") {
+    const frame = getTargetedBuild();
+    if (!frame || !frame.userData.frameType || frame.userData.frameType !== piece.doorType || frame.userData.hasDoor) {
+      return { valid:false, visible:false };
+    }
+    return {
+      valid:true,
+      visible:true,
+      x: frame.position.x,
+      z: frame.position.z,
+      y: 0,
+      yaw: frame.rotation.y,
+      snapTarget: frame
+    };
+  }
+
+  let placement = getBuildPlacement(piece);
+  const rawX = placement.x;
+  const rawZ = placement.z;
+  const snapHit = getBuildSnapHit();
+  if (snapHit) {
+    const root = snapHit.root;
+    if (piece.id === "floor" || piece.id === "ceiling" || piece.id === "foundation") {
+      placement = {
+        x: root.position.x,
+        z: root.position.z,
+        y: 0,
+        yaw: root.rotation.y
+      };
+    } else {
+      const dx = snapHit.point.x - root.position.x;
+      const dz = snapHit.point.z - root.position.z;
+      if (Math.abs(dx) > Math.abs(dz)) {
+        placement = {
+          x: root.position.x + (dx >= 0 ? 4 : -4),
+          z: root.position.z,
+          y: 0,
+          yaw: Math.PI * 0.5
+        };
+      } else {
+        placement = {
+          x: root.position.x,
+          z: root.position.z + (dz >= 0 ? 4 : -4),
+          y: 0,
+          yaw: 0
+        };
+      }
+    }
+  } else {
+    const near = getNearestPlacedBuildTo(rawX, rawZ);
+    if (near) {
+      const snapped = findAdjacentBuildPlacement(near, rawX, rawZ, placement.yaw, piece);
+      if (snapped) placement = snapped;
+      else return { ...placement, valid:false, visible:false };
+    } else {
+      placement.y = 0;
+    }
+  }
+
+  const occupied = isPlacementOccupied(placement.x, placement.z, piece.category === "wall" ? 2.2 : 2.8, piece);
+  return { ...placement, valid: !occupied, visible: !occupied };
+}
+
+function rebuildPreviewMesh(piece) {
+  buildPreview.clear();
+  if (!piece) {
+    buildPreview.visible = false;
+    return;
+  }
+  const visual = createBuildVisual(piece, "twig", true);
+  buildPreview.add(visual.group);
+  buildPreview.visible = true;
+}
+
+function updateBuildMenu() {
+  buildMenu.style.display = buildMenuOpen ? "flex" : "none";
+  buildMenu.innerHTML = "";
+
+  for (const piece of buildPieces) {
+    const card = document.createElement("button");
+    card.className = "buildCard";
+    if (selectedBuildPiece === piece.id) card.classList.add("active");
+    card.innerHTML = `
+      <div class="recipeTitle">${piece.name}</div>
+      <div class="recipeMeta">${costsText(piece.costs)}</div>
+    `;
+    card.addEventListener("click", () => {
+      selectedBuildPiece = selectedBuildPiece === piece.id ? null : piece.id;
+      buildMenuOpen = false;
+      rebuildPreviewMesh(getBuildPiece(selectedBuildPiece));
+      updateBuildMenu();
+    });
+    buildMenu.appendChild(card);
+  }
+}
+
+function addPlacedBuildColliders(piece, placement) {
+  if (piece.id === "foundation" || piece.id === "floor") {
+    addBoxCollider(placement.x, placement.z, 2, 2);
+  } else if (piece.id === "ceiling") {
+    addBoxCollider(placement.x, placement.z, 2, 2);
+  } else if (piece.id === "wall") {
+    if (Math.abs(Math.sin(placement.yaw)) > 0.5) addBoxCollider(placement.x, placement.z, 0.2, 2);
+    else addBoxCollider(placement.x, placement.z, 2, 0.2);
+  } else if (piece.id === "single_door_frame" || piece.id === "double_door_frame") {
+    if (Math.abs(Math.sin(placement.yaw)) > 0.5) {
+      addBoxCollider(placement.x, placement.z - 1.75, 0.2, 0.25);
+      addBoxCollider(placement.x, placement.z + 1.75, 0.2, 0.25);
+    } else {
+      addBoxCollider(placement.x - 1.75, placement.z, 0.25, 0.2);
+      addBoxCollider(placement.x + 1.75, placement.z, 0.25, 0.2);
+    }
+  }
+}
+
+function placeBuildPiece() {
+  const piece = getBuildPiece(selectedBuildPiece);
+  if (!piece || !hasRecipeCosts(piece)) return false;
+
+  const placement = computeBuildPlacement(piece);
+  if (!placement.valid) return false;
+
+  if (piece.category === "door") {
+    const frame = placement.snapTarget;
+    const doorRoot = new THREE.Group();
+    doorRoot.userData.isPlacedBuild = true;
+    doorRoot.userData.buildType = piece.id;
+    doorRoot.userData.tier = "twig";
+    doorRoot.userData.isDoor = true;
+    doorRoot.userData.open = false;
+    doorRoot.userData.targetAngle = 0;
+    doorRoot.userData.frameType = piece.doorType;
+    const doorMat = new THREE.MeshStandardMaterial({ color:0x8f673b, roughness:0.9 });
+    const doorMesh = new THREE.Mesh(new THREE.BoxGeometry(piece.size.x, piece.size.y, piece.size.z), doorMat);
+    doorMesh.position.set(piece.id === "single_wood_door" ? -0.8 : 0, piece.size.y*0.5, 0);
+    doorMesh.castShadow = true;
+    doorMesh.receiveShadow = true;
+    doorRoot.add(doorMesh);
+    doorRoot.position.copy(frame.position);
+    doorRoot.rotation.y = frame.rotation.y;
+    doorRoot.userData.highlightMeshes = [doorMesh];
+    frame.add(doorRoot);
+    frame.userData.hasDoor = true;
+    frame.userData.doorRef = doorRoot;
+    placedBuilds.push({ root:doorRoot, piece, tier:"twig", type:piece.id, layer:getBuildLayer(piece) });
+    for (const cost of piece.costs) removeItem(cost.item, cost.count);
+    return true;
+  }
+
+  const build = new THREE.Group();
+  build.userData.isPlacedBuild = true;
+  build.userData.buildType = piece.id;
+  build.userData.pieceId = piece.id;
+  build.userData.tier = "twig";
+  const visual = createBuildVisual(piece, "twig", false);
+  build.add(visual.group);
+  let highlightMeshes = visual.highlightMeshes;
+  build.userData.visualGroup = visual.group;
+
+  build.position.set(placement.x, 0, placement.z);
+  build.rotation.y = placement.yaw;
+  build.userData.highlightMeshes = highlightMeshes;
+  build.userData.stability = 52;
+  build.userData.maxHealth = 200;
+  if (piece.id === "single_door_frame" || piece.id === "double_door_frame") {
+    build.userData.frameType = piece.doorType;
+    build.userData.hasDoor = false;
+  }
+  scene.add(build);
+  placedBuilds.push({ root:build, piece, tier:"twig", type:piece.id, layer:getBuildLayer(piece) });
+
+  for (const cost of piece.costs) removeItem(cost.item, cost.count);
+  addPlacedBuildColliders(piece, placement);
+  renderCraftingRecipes();
+  return true;
+}
+
+function updateBuildPreview() {
+  if (equippedTool !== "building_plan" || !selectedBuildPiece) {
+    buildPreview.visible = false;
+    return;
+  }
+  const piece = getBuildPiece(selectedBuildPiece);
+  if (!piece) {
+    buildPreview.visible = false;
+    return;
+  }
+  const placement = computeBuildPlacement(piece);
+  if (!placement.visible) {
+    buildPreview.visible = false;
+    return;
+  }
+  rebuildPreviewMesh(piece);
+  buildPreview.position.set(placement.x, placement.y || 0, placement.z);
+  buildPreview.rotation.y = placement.yaw;
+}
+
+function applyTierToBuild(buildRoot, tier) {
+  const piece = getBuildPiece(buildRoot.userData.pieceId || buildRoot.userData.buildType);
+  if (!piece) return;
+  if (buildRoot.userData.visualGroup) buildRoot.remove(buildRoot.userData.visualGroup);
+  const visual = createBuildVisual(piece, tier, false);
+  buildRoot.add(visual.group);
+  buildRoot.userData.visualGroup = visual.group;
+  buildRoot.userData.highlightMeshes = visual.highlightMeshes;
+  buildRoot.userData.tier = tier;
+  buildRoot.userData.maxHealth = tier === "stone" ? 500 : tier === "wood" ? 250 : 120;
+}
+
+function openRadialMenu(x, y, options) {
+  radialMenu.innerHTML = "";
+  radialMenu.style.left = x + "px";
+  radialMenu.style.top = y + "px";
+  const center = document.createElement("div");
+  center.className = "radialCenter";
+  const centerTitle = document.createElement("div");
+  centerTitle.className = "radialCenterTitle";
+  centerTitle.textContent = options[0]?.label || "Build";
+  const centerMeta = document.createElement("div");
+  centerMeta.className = "radialCenterMeta";
+  centerMeta.textContent = "Hold right click, pick a piece";
+  center.append(centerTitle, centerMeta);
+  radialMenu.appendChild(center);
+  const positions = [
+    { x:116, y:8 },
+    { x:214, y:52 },
+    { x:224, y:154 },
+    { x:160, y:228 },
+    { x:62, y:226 },
+    { x:2, y:152 },
+    { x:10, y:52 },
+    { x:116, y:222 }
+  ];
+  options.forEach((option, index) => {
+    const btn = document.createElement("button");
+    btn.className = "radialOption";
+    btn.textContent = option.label;
+    btn.style.left = positions[index % positions.length].x + "px";
+    btn.style.top = positions[index % positions.length].y + "px";
+    btn.onclick = () => {
+      option.onClick();
+      closeRadialMenu();
+    };
+    btn.onmouseenter = () => {
+      centerTitle.textContent = option.label;
+      centerMeta.textContent = option.meta || "Select building option";
+    };
+    radialMenu.appendChild(btn);
+  });
+  radialMenu.style.display = "block";
+  radialMenuOpen = true;
+}
+
+function closeRadialMenu() {
+  radialMenu.style.display = "none";
+  radialMenu.innerHTML = "";
+  radialMenuOpen = false;
+  if (equippedTool === "building_plan" && !inventoryOpen && !lootOpen && !mapOpen) {
+    canvas.requestPointerLock();
+  }
+}
+
+function openHammerMenu() {
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  const target = getTargetedBuild();
+  if (!target || target.userData.isDoor) return;
+  openRadialMenu(innerWidth * 0.5, innerHeight * 0.5, [
+    {
+      label:"Upgrade Wood",
+      meta:"Reinforce with wood",
+      onClick: () => {
+        if (totalOf("wood") >= 50) {
+          removeItem("wood", 50);
+          applyTierToBuild(target, "wood");
+        }
+      }
+    },
+    {
+      label:"Upgrade Stone",
+      meta:"Heavy stone upgrade",
+      onClick: () => {
+        if (totalOf("stone") >= 60) {
+          removeItem("stone", 60);
+          applyTierToBuild(target, "stone");
+        }
+      }
+    }
+  ]);
+}
+
+function openBuildPieceMenu() {
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  if (!selectedBuildPiece) selectedBuildPiece = "wall";
+  openRadialMenu(innerWidth * 0.5, innerHeight * 0.5, [
+    { label:"Wall", meta:"Twig wall piece", onClick: () => { selectedBuildPiece = "wall"; rebuildPreviewMesh(getBuildPiece(selectedBuildPiece)); } },
+    { label:"Floor", meta:"Snap floor tile", onClick: () => { selectedBuildPiece = "floor"; rebuildPreviewMesh(getBuildPiece(selectedBuildPiece)); } },
+    { label:"Ceiling", meta:"Upper floor tile", onClick: () => { selectedBuildPiece = "ceiling"; rebuildPreviewMesh(getBuildPiece(selectedBuildPiece)); } },
+    { label:"Single Frame", meta:"Single door opening", onClick: () => { selectedBuildPiece = "single_door_frame"; rebuildPreviewMesh(getBuildPiece(selectedBuildPiece)); } },
+    { label:"Double Frame", meta:"Double door opening", onClick: () => { selectedBuildPiece = "double_door_frame"; rebuildPreviewMesh(getBuildPiece(selectedBuildPiece)); } },
+    { label:"Single Door", meta:"Place in single frame", onClick: () => { selectedBuildPiece = "single_wood_door"; rebuildPreviewMesh(getBuildPiece(selectedBuildPiece)); } },
+    { label:"Double Door", meta:"Place in double frame", onClick: () => { selectedBuildPiece = "double_wood_door"; rebuildPreviewMesh(getBuildPiece(selectedBuildPiece)); } }
+  ]);
+}
+
+function toggleDoor(buildRoot) {
+  if (!buildRoot || !buildRoot.userData.isDoor) return;
+  buildRoot.userData.open = !buildRoot.userData.open;
+  buildRoot.userData.targetAngle = buildRoot.userData.open ? (buildRoot.userData.frameType === "double" ? Math.PI * 0.5 : Math.PI * 0.85) : 0;
+}
+
+function updatePlacedBuilds(delta) {
+  const target = getTargetedBuild();
+  if (equippedTool === "hammer") setBuildHighlight(target);
+  else clearBuildHighlight();
+
+  if (buildHint) {
+    if (equippedTool === "building_plan" && selectedBuildPiece) {
+      const piece = getBuildPiece(selectedBuildPiece);
+      buildHint.style.display = "block";
+      buildHint.textContent = "Building Plan: " + (piece ? piece.name : "Wall");
+    } else if (equippedTool === "hammer" && target && !target.userData.isDoor) {
+      const tier = (target.userData.tier || "twig").toUpperCase();
+      const health = target.userData.maxHealth || 120;
+      buildHint.style.display = "block";
+      buildHint.textContent = tier + " | " + (target.userData.stability || 52) + "% STABLE | " + health + " HP";
+    } else {
+      buildHint.style.display = "none";
+    }
+  }
+
+  for (const build of placedBuilds) {
+    const root = build.root;
+    if (root.userData.isDoor) {
+      root.rotation.z = THREE.MathUtils.lerp(root.rotation.z, root.userData.targetAngle || 0, delta * 6);
+    }
+  }
+}
+
+function updateVitals(delta) {
+  player.hunger = Math.max(0, player.hunger - delta * 0.45);
+  player.water = Math.max(0, player.water - delta * 0.7);
+
+  if (player.hunger <= 0 || player.water <= 0) {
+    player.health = Math.max(1, player.health - delta * 3.5);
+  }
+}
+
+function updateDayNightCycle(nowMs) {
+  const cycle = (nowMs * 0.001) / DAY_NIGHT_SECONDS;
+  const sunPhase = cycle * Math.PI * 2;
+  const daylight = THREE.MathUtils.clamp(Math.sin(sunPhase) * 0.5 + 0.5, 0.08, 1);
+
+  sun.position.set(Math.cos(sunPhase) * 140, 30 + daylight * 120, Math.sin(sunPhase) * 140);
+  sun.intensity = 0.15 + daylight * 1.15;
+  hemi.intensity = 0.18 + daylight * 0.72;
+
+  scene.background.copy(nightSkyColor).lerp(daySkyColor, daylight);
+  scene.fog.color.copy(scene.background);
+}
+
+function isRainingAt(nowMs) {
+  const cycleMs = 5 * 60 * 1000;
+  const phaseMs = nowMs % cycleMs;
+  const cycleIndex = Math.floor(nowMs / cycleMs);
+  const shouldRainThisCycle = Math.sin(cycleIndex * 12.9898 + 4.123) > 0;
+  return shouldRainThisCycle && phaseMs < 2 * 60 * 1000;
+}
+
+function updateBiomeAtmosphere(nowMs, delta) {
+  const biome = getBiomeAt(player.pos.x, player.pos.z);
+  const raining = biome !== "snow" && isRainingAt(nowMs);
+
+  if (biome === "snow") {
+    scene.fog.near = 36;
+    scene.fog.far = 118;
+  } else if (raining) {
+    scene.fog.near = 55;
+    scene.fog.far = 180;
+  } else {
+    scene.fog.near = 80;
+    scene.fog.far = 260;
+  }
+
+  updateWeatherParticles(delta, biome, raining);
+}
+
+function drawWorldMap() {
+  if (!mapCanvas) return;
+  const ctx = mapCanvas.getContext("2d");
+  const w = mapCanvas.width;
+  const h = mapCanvas.height;
+  const mapX = x => w * 0.5 + (x / WATER_INNER) * (w * 0.4);
+  const mapY = z => h * 0.5 + (z / WATER_INNER) * (h * 0.4);
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#17324c";
+  ctx.fillRect(0, 0, w, h);
+
+  const cell = 4;
+  for (let px=0; px<w; px+=cell) {
+    for (let py=0; py<h; py+=cell) {
+      const worldX = ((px / w) - 0.5) * WATER_INNER * 2.05;
+      const worldZ = ((py / h) - 0.5) * WATER_INNER * 2.05;
+      const biome = getBiomeAt(worldX, worldZ);
+      let color = "#17324c";
+      if (biome === "beach") color = "#d5bf80";
+      else if (biome === "grass") color = "#5d7f40";
+      else if (biome === "snow") color = "#dde3e7";
+      else if (biome === "desert") color = "#c9ad67";
+      ctx.fillStyle = color;
+      ctx.fillRect(px, py, cell, cell);
+    }
+  }
+
+  ctx.strokeStyle = "rgba(30,50,25,0.4)";
+  ctx.lineWidth = 1;
+  for (let x=75; x<=w-75; x+=45) {
+    ctx.beginPath();
+    ctx.moveTo(x, 65);
+    ctx.lineTo(x, h-65);
+    ctx.stroke();
+  }
+  for (let y=65; y<=h-65; y+=38) {
+    ctx.beginPath();
+    ctx.moveTo(75, y);
+    ctx.lineTo(w-75, y);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = "#3f78a8";
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(w * 0.74, h * 0.22);
+  ctx.quadraticCurveTo(w * 0.7, h * 0.4, w * 0.78, h * 0.68);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(70,58,40,0.85)";
+  ctx.lineWidth = 5;
+  for (const road of worldLayout.roads) {
+    ctx.beginPath();
+    ctx.moveTo(mapX(road[0].x), mapY(road[0].z));
+    for (let i=1; i<road.length; i++) ctx.lineTo(mapX(road[i].x), mapY(road[i].z));
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "#222";
+  ctx.font = "bold 22px sans-serif";
+  ctx.fillText("Oxums", mapX(worldLayout.oxums.x - 6), mapY(worldLayout.oxums.z - 2));
+  ctx.fillStyle = "#d74d3c";
+  ctx.beginPath();
+  ctx.arc(mapX(worldLayout.oxums.x), mapY(worldLayout.oxums.z), 7, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(mapX(player.pos.x), mapY(player.pos.z), 6, 0, Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle = "#111";
+  ctx.font = "bold 12px sans-serif";
+  ctx.fillText("YOU", mapX(player.pos.x) + 10, mapY(player.pos.z) - 10);
+
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.font = "12px sans-serif";
+  const labels = [
+    ["SNOW", mapX(worldLayout.snowA.x - 20), mapY(worldLayout.snowA.z - 34)],
+    ["GRASSLAND", mapX(0), mapY(0)],
+    ["DESERT", mapX(worldLayout.desertA.x - 8), mapY(worldLayout.desertA.z - 22)],
+    ["BEACH", mapX(112), mapY(126)]
+  ];
+  for (const [label, x, y] of labels) ctx.fillText(label, x, y);
+}
+
+/* drag & drop */
+let dragging = false;
+let dragSource = null;
+let dragData = null;
+
+function onAnySlotMouseDown(e) {
+  const slotEl = e.currentTarget;
+  const container = slotEl.dataset.container;
+  const idx = parseInt(slotEl.dataset.index,10);
+
+  if (container === "inventory" && !inventoryOpen && !lootOpen) return;
+  if (container === "loot" && !lootOpen) return;
+
+  let s;
+  if (container === "inventory") s = slots[idx];
+  else s = lootSlots[idx];
+
+  if (!s.item) return;
+
+  dragging = true;
+  dragSource = { container, index:idx };
+  dragData = { item:s.item, count:s.count };
+  dragItemDiv.style.display = "block";
+  dragItemDiv.textContent = itemName(s.item) + " x" + s.count;
+
+  s.item = null;
+  s.count = 0;
+  refreshInventoryUI();
+  refreshLootUI();
+}
+
+function onMouseMove(e) {
+  if (!dragging) return;
+  dragItemDiv.style.left = (e.clientX + 8) + "px";
+  dragItemDiv.style.top  = (e.clientY + 8) + "px";
+}
+
+function placeIntoSlot(container, idx, data) {
+  let arr = container === "inventory" ? slots : lootSlots;
+  const s = arr[idx];
+
+  if (!s.item) {
+    s.item = data.item;
+    s.count = data.count;
+  } else if (s.item === data.item && container === "inventory" && s.count < MAX_STACK) {
+    const space = MAX_STACK - s.count;
+    const add = Math.min(space, data.count);
+    s.count += add;
+    const leftover = data.count - add;
+    if (leftover > 0 && container === "inventory") {
+      addItem(data.item, leftover);
+    }
+  } else {
+    const tempItem = s.item;
+    const tempCount = s.count;
+    s.item = data.item;
+    s.count = data.count;
+    if (dragSource) {
+      let srcArr = dragSource.container === "inventory" ? slots : lootSlots;
+      const srcSlot = srcArr[dragSource.index];
+      if (!srcSlot.item) {
+        srcSlot.item = tempItem;
+        srcSlot.count = tempCount;
+      } else if (dragSource.container === "inventory" && srcSlot.item === tempItem && srcSlot.count < MAX_STACK) {
+        const space = MAX_STACK - srcSlot.count;
+        const add = Math.min(space, tempCount);
+        srcSlot.count += add;
+        const leftover = tempCount - add;
+        if (leftover > 0) addItem(tempItem, leftover);
+      } else {
+        addItem(tempItem, tempCount);
+      }
+    } else {
+      addItem(tempItem, tempCount);
+    }
+  }
+}
+
+function onMouseUp(e) {
+  if (!dragging) return;
+  dragging = false;
+  dragItemDiv.style.display = "none";
+
+  const target = document.elementFromPoint(e.clientX, e.clientY);
+  if (!target) {
+    if (dragSource) {
+      let arr = dragSource.container === "inventory" ? slots : lootSlots;
+      const s = arr[dragSource.index];
+      if (!s.item) {
+        s.item = dragData.item;
+        s.count = dragData.count;
+      } else if (dragSource.container === "inventory") {
+        addItem(dragData.item, dragData.count);
+      }
+    }
+    dragData = null;
+    dragSource = null;
+    refreshInventoryUI();
+    refreshLootUI();
+    return;
+  }
+
+  const slotEl = target.closest(".slot, .lootSlot");
+  if (!slotEl) {
+    if (dragSource) {
+      let arr = dragSource.container === "inventory" ? slots : lootSlots;
+      const s = arr[dragSource.index];
+      if (!s.item) {
+        s.item = dragData.item;
+        s.count = dragData.count;
+      } else if (dragSource.container === "inventory") {
+        addItem(dragData.item, dragData.count);
+      }
+    }
+    dragData = null;
+    dragSource = null;
+    refreshInventoryUI();
+    refreshLootUI();
+    return;
+  }
+
+  const container = slotEl.dataset.container;
+  const idx = parseInt(slotEl.dataset.index,10);
+  placeIntoSlot(container, idx, dragData);
+
+  dragData = null;
+  dragSource = null;
+  refreshInventoryUI();
+  refreshLootUI();
+}
+
+document.querySelectorAll(".slot, .lootSlot").forEach(el => {
+  el.addEventListener("mousedown", onAnySlotMouseDown);
+});
+window.addEventListener("mousemove", onMouseMove);
+window.addEventListener("mouseup", onMouseUp);
+
+function selectHotbar(index) {
+  if (index < 0 || index >= HOTBAR_SLOTS) return;
+  selectedHotbar = index;
+  refreshInventoryUI();
+  updateEquippedTool();
+}
+
+/* ---------------------------------------------------------
+   TOOLS
+--------------------------------------------------------- */
+let equippedTool = "none";
+
+const toolGroup = new THREE.Group();
+camera.add(toolGroup);
+toolGroup.position.set(0, -0.7, -1.2);
+toolGroup.rotation.set(-0.4, 0, 0);
+
+let axeMesh, pickaxeMesh, hammerMesh, buildingPlanMesh;
+
+function createTools() {
+  const handleMat = new THREE.MeshStandardMaterial({ color:0x8b5a2b, roughness:0.9 });
+  const stoneMat  = new THREE.MeshStandardMaterial({ color:0x777777, roughness:0.9 });
+  const metalMat  = new THREE.MeshStandardMaterial({ color:0x90959c, roughness:0.45, metalness:0.45 });
+  const ropeMat   = new THREE.MeshStandardMaterial({ color:0xa97a43, roughness:0.8 });
+
+  const axe = new THREE.Group();
+  const handle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.045,0.06,1.3,7),
+    handleMat
+  );
+  handle.position.set(0,-0.08,0);
+  axe.add(handle);
+
+  const axeBlade = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5,0.34,0.12),
+    metalMat
+  );
+  axeBlade.position.set(0.2,0.36,0);
+  axe.add(axeBlade);
+
+  const axeEdge = new THREE.Mesh(
+    new THREE.BoxGeometry(0.2,0.28,0.05),
+    metalMat
+  );
+  axeEdge.position.set(0.45,0.36,0);
+  axe.add(axeEdge);
+
+  const axePoll = new THREE.Mesh(
+    new THREE.BoxGeometry(0.14,0.18,0.1),
+    metalMat
+  );
+  axePoll.position.set(-0.1,0.34,0);
+  axe.add(axePoll);
+
+  const rope = new THREE.Mesh(
+    new THREE.TorusGeometry(0.1,0.025,6,12),
+    ropeMat
+  );
+  rope.rotation.x = Math.PI/2;
+  rope.position.set(0.06,0.22,0);
+  axe.add(rope);
+  axe.position.set(0.32,-0.18,0.1);
+  axe.rotation.set(0.2,0.1,-0.62);
+
+  axeMesh = axe;
+  axeMesh.visible = false;
+  toolGroup.add(axeMesh);
+
+  const pick = new THREE.Group();
+  const pHandle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.045,0.06,1.35,7),
+    handleMat
+  );
+  pHandle.position.set(0,-0.05,0);
+  pick.add(pHandle);
+
+  const pickHead = new THREE.Mesh(
+    new THREE.BoxGeometry(0.72,0.12,0.12),
+    metalMat
+  );
+  pickHead.position.set(0,0.5,0);
+  pick.add(pickHead);
+
+  const leftSpike = new THREE.Mesh(
+    new THREE.ConeGeometry(0.11,0.44,6),
+    metalMat
+  );
+  leftSpike.rotation.z = Math.PI * 0.5;
+  leftSpike.position.set(-0.56,0.5,0);
+  pick.add(leftSpike);
+
+  const rightSpike = new THREE.Mesh(
+    new THREE.ConeGeometry(0.11,0.44,6),
+    metalMat
+  );
+  rightSpike.rotation.z = -Math.PI * 0.5;
+  rightSpike.position.set(0.56,0.5,0);
+  pick.add(rightSpike);
+
+  const pickRope = new THREE.Mesh(
+    new THREE.TorusGeometry(0.1,0.025,6,12),
+    ropeMat
+  );
+  pickRope.rotation.x = Math.PI/2;
+  pickRope.position.set(0,0.38,0);
+  pick.add(pickRope);
+  pick.position.set(0.28,-0.16,0.04);
+  pick.rotation.set(0.24,-0.08,-0.56);
+
+  pickaxeMesh = pick;
+  pickaxeMesh.visible = false;
+  toolGroup.add(pickaxeMesh);
+
+  const hammer = new THREE.Group();
+  const hammerHandle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.05,0.06,0.95,6),
+    handleMat
+  );
+  hammerHandle.position.set(0,-0.1,0);
+  hammer.add(hammerHandle);
+
+  const hammerHead = new THREE.Mesh(
+    new THREE.BoxGeometry(0.42,0.18,0.18),
+    metalMat
+  );
+  hammerHead.position.set(0,0.34,0);
+  hammer.add(hammerHead);
+
+  const claw = new THREE.Mesh(
+    new THREE.BoxGeometry(0.18,0.12,0.24),
+    metalMat
+  );
+  claw.position.set(-0.16,0.34,0);
+  hammer.add(claw);
+  hammer.position.set(0.28,-0.14,0.08);
+  hammer.rotation.set(0.34,0.05,-0.52);
+
+  hammerMesh = hammer;
+  hammerMesh.visible = false;
+  toolGroup.add(hammerMesh);
+
+  const plan = new THREE.Group();
+  const page = new THREE.Mesh(
+    new THREE.BoxGeometry(0.7,0.02,0.92),
+    new THREE.MeshStandardMaterial({ color:0x3a79bf, roughness:0.65 })
+  );
+  page.rotation.y = 0.05;
+  page.rotation.z = 0.06;
+  plan.add(page);
+
+  const page2 = new THREE.Mesh(
+    new THREE.BoxGeometry(0.66,0.015,0.86),
+    new THREE.MeshStandardMaterial({ color:0x7bb0f0, roughness:0.6 })
+  );
+  page2.position.set(0.03,0.03,0.02);
+  page2.rotation.y = 0.03;
+  page2.rotation.z = 0.03;
+  plan.add(page2);
+  plan.position.set(0.22,-0.08,0.16);
+  plan.rotation.set(0.42,0.18,-0.2);
+
+  buildingPlanMesh = plan;
+  buildingPlanMesh.visible = false;
+  toolGroup.add(buildingPlanMesh);
+}
+
+createTools();
+
+function updateEquippedTool() {
+  const s = slots[selectedHotbar];
+  const previousTool = equippedTool;
+  let newTool = "none";
+  if (s && s.item === "axe") newTool = "axe";
+  if (s && s.item === "pickaxe") newTool = "pickaxe";
+  if (s && s.item === "hammer") newTool = "hammer";
+  if (s && s.item === "building_plan") newTool = "building_plan";
+  equippedTool = newTool;
+  if ((equippedTool === "hammer" || equippedTool === "building_plan") && !selectedBuildPiece) {
+    selectedBuildPiece = "wall";
+    rebuildPreviewMesh(getBuildPiece(selectedBuildPiece));
+  }
+  if (previousTool !== equippedTool && equippedTool !== "building_plan") {
+    buildPreview.visible = false;
+  }
+  if (axeMesh) axeMesh.visible = (equippedTool === "axe");
+  if (pickaxeMesh) pickaxeMesh.visible = (equippedTool === "pickaxe");
+  if (hammerMesh) hammerMesh.visible = (equippedTool === "hammer");
+  if (buildingPlanMesh) buildingPlanMesh.visible = (equippedTool === "building_plan");
+}
+
+/* swing + sway */
+let swingTime = 0;
+let swingActive = false;
+
+function startSwing() {
+  if (equippedTool === "none") return;
+  if (swingActive) return;
+  swingActive = true;
+  swingTime = 0;
+}
+
+function updateToolAnimation(delta, moveAmount) {
+  const swayStrength = 0.08;
+  const swaySpeed = 6;
+  const t = performance.now() * 0.001;
+  const sway = Math.sin(t * swaySpeed) * swayStrength * Math.min(moveAmount*5,1);
+
+  toolGroup.rotation.z = sway;
+  toolGroup.rotation.x = -0.4;
+
+  if (swingActive) {
+    swingTime += delta * 5;
+    const p = Math.min(swingTime, 1);
+    const angle = Math.sin(p * Math.PI) * 0.8;
+    toolGroup.rotation.x = -0.4 + angle;
+    if (p >= 1) {
+      swingActive = false;
+      toolGroup.rotation.x = -0.4;
+    }
+  }
+}
+
+/* ---------------------------------------------------------
+   RAYCAST HIT + LOOT OPEN
+--------------------------------------------------------- */
+const ray = new THREE.Raycaster();
+let currentLootBox = null;
+
+window.addEventListener("click", () => {
+  if (inventoryOpen || lootOpen) return;
+
+  if (equippedTool === "building_plan" && selectedBuildPiece) {
+    placeBuildPiece();
+    return;
+  }
+
+  if (document.pointerLockElement !== canvas) return;
+
+  startSwing();
+
+  ray.setFromCamera({x:0,y:0}, camera);
+  const hits = ray.intersectObjects(interactables, true);
+  if (!hits.length) return;
+
+  const hit = hits[0];
+  if (hit.distance > 6) return;
+
+  let obj = hit.object;
+  while (obj.parent && obj.parent !== scene) obj = obj.parent;
+
+  const data = obj.userData;
+
+  if (data.type === "lootbox") return;
+
+  let damage = 1;
+
+  if (data.type === "tree") {
+    const redX = data.redX;
+    if (redX && redX.mesh) {
+      const xWorld = new THREE.Vector3();
+      redX.mesh.getWorldPosition(xWorld);
+      if (xWorld.distanceTo(hit.point) < 1.0) {
+        damage = 3;
+        spawnParticles(hit.point, "wood", 14);
+        moveTreeRedXSlightly(obj);
+      } else {
+        spawnParticles(hit.point, "wood", 8);
+      }
+    } else {
+      spawnParticles(hit.point, "wood", 8);
+    }
+  } else if (data.type === "rock") {
+    const shineData = data.shine;
+    if (shineData && shineData.mesh) {
+      const shineWorld = new THREE.Vector3();
+      shineData.mesh.getWorldPosition(shineWorld);
+      if (shineWorld.distanceTo(hit.point) < 1.0) {
+        damage = 3;
+        spawnParticles(hit.point, "stone", 14);
+        moveRockShineSlightly(obj);
+      } else {
+        spawnParticles(hit.point, "stone", 8);
+      }
+    } else {
+      spawnParticles(hit.point, "stone", 8);
+    }
+  } else if (data.type === "animal") {
+    spawnParticles(hit.point, "meat", 10);
+    if (data.species === "boar" || data.species === "bear") {
+      data.aggro = true;
+      data.state = "chase";
+      data.target.copy(player.pos);
+    } else if (data.species === "deer") {
+      data.state = "flee";
+      data.target.set(
+        obj.position.x - Math.sin(player.yaw) * 12,
+        0,
+        obj.position.z - Math.cos(player.yaw) * 12
+      );
+    }
+  }
+
+  data.hp -= damage;
+
+  if (data.hp <= 0){
+    if (data.type==="tree") {
+      if (equippedTool === "axe") addItem("wood",4);
+      else addItem("wood",2);
+      startTreeFall(obj);
+    }
+    if (data.type==="rock") {
+      if (equippedTool === "pickaxe") addItem("stone",4);
+      else addItem("stone",2);
+      startNodeBreak(obj);
+    }
+    if (data.type==="animal") {
+      addItem("meat", data.species === "bear" ? 3 : 1);
+      scene.remove(obj);
+      removeFromArray(interactables, obj);
+      removeFromArray(animals, obj);
+    }
+  }
+});
+
+function openLootBox(box) {
+  const boxPos = new THREE.Vector3();
+  box.getWorldPosition(boxPos);
+  if (distanceToPlayer(boxPos) > 4.5) return;
+
+  const data = box.userData;
+  if (data.opened) return;
+  data.opened = true;
+
+  for (let i=0;i<LOOT_SLOT_COUNT;i++) {
+    lootSlots[i].item = null;
+    lootSlots[i].count = 0;
+  }
+  for (let i=0;i<data.loot.length && i<LOOT_SLOT_COUNT;i++) {
+    lootSlots[i].item = data.loot[i].item;
+    lootSlots[i].count = data.loot[i].count;
+  }
+  refreshLootUI();
+
+  inventoryOpenedByLoot = !inventoryOpen;
+  inventoryOpen = true;
+  lootOpen = true;
+  updatePanelLayout();
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  currentLootBox = box;
+}
+
+/* ---------------------------------------------------------
+   CRAFTING
+--------------------------------------------------------- */
+function craftAxe(){
+  if (totalOf("wood")>=3 && totalOf("stone")>=2){
+    removeItem("wood",3);
+    removeItem("stone",2);
+    addItem("axe",1);
+  }
+}
+function craftPickaxe(){
+  if (totalOf("wood")>=3 && totalOf("stone")>=3){
+    removeItem("wood",3);
+    removeItem("stone",3);
+    addItem("pickaxe",1);
+  }
+}
+
+/* ---------------------------------------------------------
+   ANIMAL MOVEMENT
+--------------------------------------------------------- */
+function updateAnimals(delta){
+  for(const a of animals){
+    const d = a.userData;
+    const toPlayer = new THREE.Vector3().subVectors(player.pos, a.position);
+    const playerDist = toPlayer.length();
+    d.attackCooldown = Math.max(0, d.attackCooldown - delta);
+
+    if ((d.species === "boar" || d.species === "bear") && playerDist < d.aggroRange) {
+      d.aggro = true;
+    }
+
+    if (d.passiveFlee && playerDist < 7) {
+      d.state = "flee";
+      d.target.set(
+        a.position.x - toPlayer.x * 1.8,
+        0,
+        a.position.z - toPlayer.z * 1.8
+      );
+    }
+
+    if (d.aggro) {
+      d.state = "chase";
+      d.target.copy(player.pos);
+    }
+
+    if (d.state === "idle") {
+      d.wait -= delta;
+      if (d.wait <= 0) {
+        const range = 20 + Math.random()*20;
+        const angle = Math.random()*Math.PI*2;
+        d.target.set(
+          a.position.x + Math.cos(angle)*range,
+          0,
+          a.position.z + Math.sin(angle)*range
+        );
+        d.state = "walk";
+      }
+    } else if (d.state === "walk" || d.state === "flee" || d.state === "chase") {
+      const dir = new THREE.Vector3().subVectors(d.target, a.position);
+      const dist = dir.length();
+      if (dist < 1) {
+        if (d.state === "chase") {
+          d.target.copy(player.pos);
+        } else {
+          d.state = "idle";
+          d.wait = 1 + Math.random()*3;
+        }
+      } else {
+        dir.normalize();
+        const speed = d.state === "flee" ? d.speed * 1.1 : d.speed;
+        a.position.x += dir.x * speed * delta;
+        a.position.z += dir.z * speed * delta;
+
+        const desiredYaw = Math.atan2(dir.x, dir.z);
+        d.yaw = THREE.MathUtils.lerp(d.yaw, desiredYaw, 5*delta);
+        a.rotation.y = d.yaw;
+      }
+
+      if (d.state === "chase" && playerDist < d.attackRange + 0.75 && d.attackCooldown <= 0) {
+        player.health = Math.max(0, player.health - d.damage);
+        spawnParticles(player.pos.clone().add(new THREE.Vector3(0, 0.8, 0)), "meat", 8);
+        d.attackCooldown = d.species === "bear" ? 1.0 : 0.85;
+      }
+    }
+  }
+}
+
+/* ---------------------------------------------------------
+   PLAYER MOVEMENT + COLLIDERS
+--------------------------------------------------------- */
+const GRAVITY = -0.012;
+const JUMP = 0.27;
+
+function resolveCircleColliders(pos) {
+  for (const c of colliders) {
+    const dx = pos.x - c.pos.x;
+    const dz = pos.z - c.pos.z;
+    const dist = Math.sqrt(dx*dx + dz*dz);
+    const targetDist = c.radius + player.radius;
+    if (dist < targetDist) {
+      const overlap = targetDist - dist;
+      if (dist > 0.0001) {
+        pos.x += (dx/dist)*overlap;
+        pos.z += (dz/dist)*overlap;
+      } else {
+        pos.x += overlap;
+      }
+    }
+  }
+}
+
+function resolveBoxColliders(pos) {
+  for (let pass = 0; pass < 3; pass++) {
+    let changed = false;
+
+    for (const c of boxColliders) {
+      const minX = c.minX - player.radius;
+      const maxX = c.maxX + player.radius;
+      const minZ = c.minZ - player.radius;
+      const maxZ = c.maxZ + player.radius;
+
+      if (pos.x > minX && pos.x < maxX && pos.z > minZ && pos.z < maxZ) {
+        const pushLeft = Math.abs(pos.x - minX);
+        const pushRight = Math.abs(maxX - pos.x);
+        const pushTop = Math.abs(pos.z - minZ);
+        const pushBottom = Math.abs(maxZ - pos.z);
+
+        const smallest = Math.min(pushLeft, pushRight, pushTop, pushBottom);
+
+        if (smallest === pushLeft) pos.x = minX;
+        else if (smallest === pushRight) pos.x = maxX;
+        else if (smallest === pushTop) pos.z = minZ;
+        else pos.z = maxZ;
+
+        changed = true;
+      }
+    }
+
+    if (!changed) break;
+  }
+}
+
+function resolvePlayerCollisions(pos) {
+  for (let pass = 0; pass < 3; pass++) {
+    const beforeX = pos.x;
+    const beforeZ = pos.z;
+    resolveCircleColliders(pos);
+    resolveBoxColliders(pos);
+    if (Math.abs(pos.x - beforeX) < 0.0001 && Math.abs(pos.z - beforeZ) < 0.0001) {
+      break;
+    }
+  }
+}
+
+function updatePlayer(delta){
+  const sens = 0.0022;
+  const appliedLookX = THREE.MathUtils.clamp(pendingLookX, -36, 36);
+  const appliedLookY = THREE.MathUtils.clamp(pendingLookY, -28, 28);
+  player.yaw -= appliedLookX * sens;
+  player.pitch -= appliedLookY * sens;
+  pendingLookX -= appliedLookX;
+  pendingLookY -= appliedLookY;
+  pendingLookX *= 0.15;
+  pendingLookY *= 0.15;
+
+  const maxPitch = Math.PI/2 - 0.1;
+  player.pitch = Math.max(-maxPitch, Math.min(maxPitch, player.pitch));
+
+  const forward = new THREE.Vector3(Math.sin(player.yaw),0,Math.cos(player.yaw));
+  const right   = new THREE.Vector3().crossVectors(forward,new THREE.Vector3(0,1,0));
+
+  let move = new THREE.Vector3();
+  if (keys["w"]) move.add(forward);
+  if (keys["s"]) move.sub(forward);
+  if (keys["a"]) move.sub(right);
+  if (keys["d"]) move.add(right);
+
+  let moveAmount = 0;
+  if (move.lengthSq()>0){
+    move.normalize().multiplyScalar(player.speed);
+    player.pos.x += move.x;
+    resolvePlayerCollisions(player.pos);
+    player.pos.z += move.z;
+    resolvePlayerCollisions(player.pos);
+    moveAmount = move.length();
+  }
+  resolvePlayerCollisions(player.pos);
+
+  player.vel.y += GRAVITY;
+  player.pos.y += player.vel.y;
+
+  if (player.pos.y < 2){
+    player.pos.y = 2;
+    player.vel.y = 0;
+    player.onGround = true;
+  } else {
+    player.onGround = false;
+  }
+
+  if (keys[" "] && player.onGround){
+    player.vel.y = JUMP;
+    player.onGround = false;
+  }
+
+  const dir = new THREE.Vector3(
+    Math.cos(player.pitch)*Math.sin(player.yaw),
+    Math.sin(player.pitch),
+    Math.cos(player.pitch)*Math.cos(player.yaw)
+  );
+
+  camera.position.copy(player.pos);
+  camera.lookAt(player.pos.clone().add(dir));
+
+  return moveAmount;
+}
+
+/* ---------------------------------------------------------
+   GAME LOOP
+--------------------------------------------------------- */
+let lastTime = performance.now();
+setInventoryTab("inventory");
+renderCraftingRecipes();
+updateCraftQueueUI();
+updateBuildMenu();
+refreshInventoryUI();
+refreshLootUI();
+updatePanelLayout();
+selectHotbar(0);
+updateHud();
+startWorldGeneration();
+
+function loop(){
+  requestAnimationFrame(loop);
+  try {
+    const now = performance.now();
+    const delta = (now - lastTime) / 1000;
+    lastTime = now;
+
+    updateDayNightCycle(now);
+    updateBiomeAtmosphere(now, delta);
+    const moveAmount = updatePlayer(delta);
+    updateAnimals(delta);
+    updateVitals(delta);
+    updateToolAnimation(delta, moveAmount);
+    updateEquippedTool();
+    updateParticles(delta);
+    updateFallingTrees(delta);
+    updateBreakingNodes(delta);
+    updatePlacedBuilds(delta);
+    finishCraftingIfReady();
+    updateCraftQueueUI();
+    updateBuildPreview();
+    updateHud();
+    if (mapOpen) drawWorldMap();
+    renderer.render(scene,camera);
+  } catch (err) {
+    showErrorOverlay(err);
+  }
+}
+loop();
+
+/* ---------------------------------------------------------
+   RESIZE
+--------------------------------------------------------- */
+onresize = () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  if (mapOpen) drawWorldMap();
+};
+</script>
+</body>
+</html>
