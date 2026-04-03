@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -14,6 +15,11 @@
     padding:8px 12px; border-radius:999px; font-size:12px; font-weight:700;
     color:#101010; background:rgba(255,255,255,0.9);
     border:1px solid rgba(255,255,255,0.22);
+  }
+  .hudValue {
+    min-width:32px; text-align:right; font-size:22px; font-weight:900;
+    letter-spacing:0.02em; color:#8fcd58;
+    text-shadow:0 1px 0 rgba(0,0,0,0.28);
   }
   .hudBlue { background:#59b8ff; }
   .hudGreen { background:#70d67e; }
@@ -184,14 +190,35 @@
     background:rgba(7,12,18,0.88); color:#dbeaff; border:1px solid rgba(112,183,255,0.3);
     font-size:12px; font-weight:700; letter-spacing:0.03em;
   }
+  #deathScreen {
+    position:fixed; inset:0; display:none; z-index:70;
+    background:radial-gradient(circle at center, rgba(115,24,20,0.22), rgba(8,2,2,0.88));
+    align-items:center; justify-content:center;
+  }
+  #deathCard {
+    min-width:320px; padding:28px 30px; border-radius:18px;
+    background:rgba(20,12,10,0.94); border:1px solid rgba(255,255,255,0.12);
+    box-shadow:0 18px 50px rgba(0,0,0,0.4); text-align:center;
+  }
+  #deathCard h2 {
+    margin:0 0 10px 0; font-size:34px; letter-spacing:0.08em; color:#f1ddd4;
+  }
+  #deathCard p {
+    margin:0 0 18px 0; font-size:13px; color:#d7c1b8;
+  }
+  #respawnBtn {
+    border:none; border-radius:999px; padding:12px 22px; cursor:pointer;
+    background:linear-gradient(180deg, #b44532, #8f281e); color:#fff4ef;
+    font-size:14px; font-weight:800; letter-spacing:0.04em;
+  }
 </style>
 </head>
 <body>
 
 <div id="statusHud">
-  <div class="hudStat hudBlue">Health <span id="health">100</span></div>
-  <div class="hudStat hudGreen">Hunger <span id="hunger">100</span></div>
-  <div class="hudStat hudOrange">Water <span id="water">100</span></div>
+  <div class="hudStat hudBlue">Health <span id="health" class="hudValue">100</span></div>
+  <div class="hudStat hudGreen">Hunger <span id="hunger" class="hudValue">100</span></div>
+  <div class="hudStat hudOrange">Water <span id="water" class="hudValue">100</span></div>
 </div>
 
 <div id="crosshair"></div>
@@ -203,7 +230,7 @@
     <button id="craftingTabBtn" class="panelTab">Crafting</button>
   </div>
   <div id="inventoryPage" class="panelPage active">
-    <h3>Inventory (Stacks of 100)</h3>
+    <h3>Inventory (Wood/Stone stack to 1000)</h3>
     <div id="inventoryGrid"></div>
   </div>
   <div id="craftingPage" class="panelPage">
@@ -231,22 +258,31 @@
   <canvas id="mapCanvas" width="900" height="600"></canvas>
 </div>
 <div id="radialMenu"></div>
+<div id="deathScreen">
+  <div id="deathCard">
+    <h2>YOU DIED</h2>
+    <p>Your body gave out. Respawn back at the starting beach.</p>
+    <button id="respawnBtn">Respawn</button>
+  </div>
+</div>
 
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
 <script>
 /* ---------------------------------------------------------
    BASIC SETUP
 --------------------------------------------------------- */
-const renderer = new THREE.WebGLRenderer({ antialias:true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.1));
+const renderer = new THREE.WebGLRenderer({ antialias:false, powerPreference:"high-performance" });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 0.9));
 renderer.setSize(innerWidth, innerHeight);
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = false;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 const errorOverlay = document.getElementById("errorOverlay");
 const mapPanel = document.getElementById("mapPanel");
 const mapCanvas = document.getElementById("mapCanvas");
 const radialMenu = document.getElementById("radialMenu");
+const deathScreen = document.getElementById("deathScreen");
+const respawnBtn = document.getElementById("respawnBtn");
 
 function showErrorOverlay(err) {
   if (!errorOverlay) return;
@@ -395,6 +431,7 @@ const player = {
   water: 100,
   radius: 0.7
 };
+let isDead = false;
 
 camera.position.copy(player.pos);
 
@@ -414,9 +451,11 @@ let pendingLookX = 0;
 let pendingLookY = 0;
 let radialMenuOpen = false;
 let highlightedBuild = null;
+let suppressBuildPlacementUntil = 0;
 
 window.addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
+  if (isDead) return;
 
   if (k === "m") {
     mapOpen = !mapOpen;
@@ -434,6 +473,16 @@ window.addEventListener("keydown", e => {
       toggleDoor(target);
       return;
     }
+    const frameTarget = resolveBuildInteractionTarget(target);
+    if (frameTarget && frameTarget.userData.hasDoor && frameTarget.userData.doorRef) {
+      toggleDoor(frameTarget.userData.doorRef);
+      return;
+    }
+    const hempTarget = getTargetedHemp();
+    if (hempTarget) {
+      harvestHemp(hempTarget);
+      return;
+    }
     const lootTarget = getTargetedLootBox();
     if (lootTarget) {
       openLootBox(lootTarget);
@@ -441,18 +490,21 @@ window.addEventListener("keydown", e => {
     }
   }
 
+  if (k === "f") {
+    if (consumeSelectedFood()) {
+      e.preventDefault();
+      return;
+    }
+  }
+
   if (k === "tab") {
     e.preventDefault();
     if (lootOpen) {
-      lootOpen = false;
-      currentLootBox = null;
-      if (inventoryOpenedByLoot) inventoryOpen = false;
-      inventoryOpenedByLoot = false;
+      closeLootPanelState();
     } else {
       inventoryOpen = !inventoryOpen;
+      updatePanelLayout();
     }
-
-    updatePanelLayout();
 
     if (inventoryOpen || lootOpen) {
       if (document.pointerLockElement === canvas) {
@@ -468,11 +520,7 @@ window.addEventListener("keydown", e => {
       return;
     }
     if (lootOpen) {
-      lootOpen = false;
-      currentLootBox = null;
-      if (inventoryOpenedByLoot) inventoryOpen = false;
-      inventoryOpenedByLoot = false;
-      updatePanelLayout();
+      closeLootPanelState();
       return;
     }
     if (inventoryOpen) {
@@ -527,6 +575,7 @@ window.addEventListener("contextmenu", e => {
 });
 
 window.addEventListener("mousedown", e => {
+  if (isDead) return;
   if (e.button === 0 && radialMenuOpen) {
     closeRadialMenu();
     return;
@@ -562,6 +611,7 @@ function mouseLook(e) {
 const interactables = [];
 const trees = [];
 const rocks = [];
+const hempPlants = [];
 const animals = [];
 const lootBoxes = [];
 const colliders = [];
@@ -569,11 +619,14 @@ const boxColliders = [];
 const grassPatches = [];
 const fallingTrees = [];
 const breakingNodes = [];
+const flyingArrows = [];
 
 const matTrunk   = new THREE.MeshStandardMaterial({ color:0x8b5a2b, roughness:0.9, metalness:0.0 });
 const matLeaf    = new THREE.MeshStandardMaterial({ color:0x2e8b57, roughness:0.8, metalness:0.0 });
 const matRock    = new THREE.MeshStandardMaterial({ color:0x808080, roughness:0.7, metalness:0.1 });
 const matRockDark= new THREE.MeshStandardMaterial({ color:0x555555, roughness:0.8, metalness:0.1 });
+const matClothLeaf = new THREE.MeshStandardMaterial({ color:0x4f9154, roughness:0.92, metalness:0.0 });
+const matClothFlower = new THREE.MeshStandardMaterial({ color:0x79d56a, roughness:0.7, metalness:0.0 });
 const matAnimalBody = new THREE.MeshStandardMaterial({ color:0xc96f53, roughness:0.8, metalness:0.0 });
 const matAnimalHead = new THREE.MeshStandardMaterial({ color:0xe0b090, roughness:0.8, metalness:0.0 });
 const matBoarBody = new THREE.MeshStandardMaterial({ color:0x8a5d43, roughness:0.9, metalness:0.0 });
@@ -589,7 +642,8 @@ const particleGeo = new THREE.SphereGeometry(0.08, 6, 6);
 const particleMats = {
   wood:  new THREE.MeshStandardMaterial({ color:0x8b5a2b, roughness:1, transparent:true }),
   stone: new THREE.MeshStandardMaterial({ color:0xcccccc, roughness:1, transparent:true }),
-  meat:  new THREE.MeshStandardMaterial({ color:0xaa3333, roughness:1, transparent:true })
+  meat:  new THREE.MeshStandardMaterial({ color:0xaa3333, roughness:1, transparent:true }),
+  cloth: new THREE.MeshStandardMaterial({ color:0x7fd975, roughness:1, transparent:true })
 };
 const weatherParticles = [];
 const weatherRainMat = new THREE.MeshStandardMaterial({ color:0x8fcaff, transparent:true, opacity:0.65 });
@@ -658,6 +712,12 @@ const terrainMats = {
   sand: makeTerrainMaterial(0xd7bd7f, 0xe9d39c),
   water: new THREE.MeshStandardMaterial({ color:0x2a6da0, roughness:0.22, metalness:0.05, transparent:true, opacity:0.9 })
 };
+const placementSurfaceMeshes = [];
+const grassBladeMat = new THREE.MeshStandardMaterial({
+  color:0x4f9d3b,
+  roughness:1,
+  side:THREE.DoubleSide
+});
 
 function addGroundPatch(x, z, w, h, mat, y = 0) {
   const patch = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
@@ -665,6 +725,7 @@ function addGroundPatch(x, z, w, h, mat, y = 0) {
   patch.position.set(x, y, z);
   patch.receiveShadow = true;
   scene.add(patch);
+  if (mat !== terrainMats.water) placementSurfaceMeshes.push(patch);
   return patch;
 }
 
@@ -683,6 +744,7 @@ function addBiomeBlob(x, z, rx, rz, mat, y = 0.01, points = 28) {
   mesh.position.set(x, y, z);
   mesh.receiveShadow = true;
   scene.add(mesh);
+  placementSurfaceMeshes.push(mesh);
   return mesh;
 }
 
@@ -734,6 +796,7 @@ beachMesh.rotation.x = -Math.PI/2;
 beachMesh.position.y = 0.018;
 beachMesh.receiveShadow = true;
 scene.add(beachMesh);
+placementSurfaceMeshes.push(beachMesh);
 
 /* ---------------------------------------------------------
    HELPERS
@@ -825,24 +888,52 @@ function moveTreeRedXSlightly(group) {
 }
 
 function addBoxCollider(x, z, halfX, halfZ) {
-  boxColliders.push({
+  const collider = {
     minX: x - halfX,
     maxX: x + halfX,
     minZ: z - halfZ,
     maxZ: z + halfZ
-  });
+  };
+  boxColliders.push(collider);
+  return collider;
 }
 
 function addBoxColliderFromCenter(pos, sizeX, sizeZ) {
-  addBoxCollider(pos.x, pos.z, sizeX * 0.5, sizeZ * 0.5);
+  return addBoxCollider(pos.x, pos.z, sizeX * 0.5, sizeZ * 0.5);
 }
 
 function addBoxColliderMinMax(minX, maxX, minZ, maxZ) {
-  boxColliders.push({ minX, maxX, minZ, maxZ });
+  const collider = { minX, maxX, minZ, maxZ };
+  boxColliders.push(collider);
+  return collider;
 }
 
 function distanceToPlayer(worldPos) {
   return player.pos.distanceTo(worldPos);
+}
+
+function getRandomSpawnPointForBiome(preferredBiome = null, margin = 16) {
+  const edge = BEACH_INNER - margin;
+  for (let attempt=0; attempt<300; attempt++) {
+    const x = randRange(-edge, edge);
+    const z = randRange(-edge, edge);
+    const biome = getBiomeAt(x, z);
+    if (biome === "water" || biome === "beach") continue;
+    if (preferredBiome && biome !== preferredBiome) continue;
+    if (Math.abs(x - worldLayout.oxums.x) < 42 && Math.abs(z - worldLayout.oxums.z) < 36) continue;
+    if (new THREE.Vector2(x - player.pos.x, z - player.pos.z).length() < 18) continue;
+    return { x, z };
+  }
+  return { x: randRange(-100, 100), z: randRange(-100, 100) };
+}
+
+function respawnWorldResource(type, biomeHint = null, delayMs = 2500) {
+  setTimeout(() => {
+    const point = getRandomSpawnPointForBiome(biomeHint);
+    if (type === "tree") spawnTree(point.x, point.z);
+    else if (type === "rock") spawnRock(point.x, point.z);
+    else if (type === "hemp") spawnHemp(point.x, point.z);
+  }, delayMs);
 }
 
 function getBiomeAt(x, z) {
@@ -906,6 +997,7 @@ function updateWeatherParticles(delta, biome, isRaining) {
 }
 
 function startTreeFall(tree) {
+  const biomeHint = getBiomeAt(tree.position.x, tree.position.z);
   removeFromArray(interactables, tree);
   removeFromArray(trees, tree);
   removeCircleColliderNear(tree.position, 0.1);
@@ -915,9 +1007,11 @@ function startTreeFall(tree) {
   tree.userData.fallProgress = 0;
   fallingTrees.push(tree);
   spawnParticles(tree.position.clone().add(new THREE.Vector3(0, 2, 0)), "wood", 24);
+  respawnWorldResource("tree", biomeHint, 3200);
 }
 
 function startNodeBreak(node) {
+  const biomeHint = getBiomeAt(node.position.x, node.position.z);
   removeFromArray(interactables, node);
   removeFromArray(rocks, node);
   removeCircleColliderNear(new THREE.Vector3(node.position.x, 0, node.position.z), 0.1);
@@ -925,6 +1019,7 @@ function startNodeBreak(node) {
   node.userData.breakProgress = 0;
   breakingNodes.push(node);
   spawnParticles(node.position.clone().add(new THREE.Vector3(0, 1.2, 0)), "stone", 22);
+  respawnWorldResource("rock", biomeHint, 3600);
 }
 
 function updateFallingTrees(delta) {
@@ -960,14 +1055,9 @@ function updateBreakingNodes(delta) {
 
 function spawnGrassPatch(x, z, count = 8) {
   const group = new THREE.Group();
-  const grassMat = new THREE.MeshStandardMaterial({
-    color:0x4f9d3b,
-    roughness:1,
-    side:THREE.DoubleSide
-  });
 
   for (let i=0; i<count; i++) {
-    const blade = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.7 + Math.random()*0.4), grassMat);
+    const blade = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.7 + Math.random()*0.4), grassBladeMat);
     blade.position.set((Math.random()-0.5)*1.8, 0.35, (Math.random()-0.5)*1.8);
     blade.rotation.y = Math.random() * Math.PI;
     blade.castShadow = false;
@@ -977,6 +1067,47 @@ function spawnGrassPatch(x, z, count = 8) {
   group.position.set(x, 0, z);
   scene.add(group);
   grassPatches.push(group);
+}
+
+function spawnHemp(x, z) {
+  const g = new THREE.Group();
+
+  const stem = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.05, 0.08, 0.95, 6),
+    new THREE.MeshStandardMaterial({ color:0x46773f, roughness:0.95 })
+  );
+  stem.position.y = 0.48;
+  g.add(stem);
+
+  for (let i=0; i<8; i++) {
+    const leaf = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.42 + Math.random()*0.18, 0.22 + Math.random()*0.08),
+      matClothLeaf
+    );
+    leaf.position.set(
+      Math.sin((Math.PI * 2 * i) / 8) * 0.16,
+      0.35 + i * 0.08,
+      Math.cos((Math.PI * 2 * i) / 8) * 0.16
+    );
+    leaf.rotation.y = (Math.PI * 2 * i) / 8;
+    leaf.rotation.z = (i % 2 === 0 ? 1 : -1) * 0.55;
+    g.add(leaf);
+  }
+
+  for (let i=0; i<4; i++) {
+    const bloom = new THREE.Mesh(
+      new THREE.SphereGeometry(0.08 + Math.random()*0.03, 6, 6),
+      matClothFlower
+    );
+    bloom.position.set((Math.random()-0.5)*0.16, 0.84 + Math.random()*0.12, (Math.random()-0.5)*0.16);
+    g.add(bloom);
+  }
+
+  g.position.set(x, 0, z);
+  g.userData = { type:"hemp", cloth:10 };
+  scene.add(g);
+  hempPlants.push(g);
+  interactables.push(g);
 }
 
 /* ---------------------------------------------------------
@@ -1466,17 +1597,41 @@ function spawnOxumsGasStation() {
   frontTop.receiveShadow = true;
   store.add(frontTop);
 
+  const entranceFrameMat = new THREE.MeshStandardMaterial({ color:0x4e5a64, roughness:0.55, metalness:0.35 });
   const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(4.8,0.35,0.45), darkWallMat);
   doorFrame.position.set(0,0.18,6);
   store.add(doorFrame);
 
+  const entranceTopBeam = new THREE.Mesh(new THREE.BoxGeometry(5.2,0.28,0.2), entranceFrameMat);
+  entranceTopBeam.position.set(0,3.18,6.14);
+  store.add(entranceTopBeam);
+  const entranceLeftBeam = new THREE.Mesh(new THREE.BoxGeometry(0.18,3.15,0.2), entranceFrameMat);
+  entranceLeftBeam.position.set(-2.02,1.6,6.14);
+  const entranceRightBeam = entranceLeftBeam.clone();
+  entranceRightBeam.position.x = 2.02;
+  store.add(entranceLeftBeam, entranceRightBeam);
+
+  const vestibuleFloor = new THREE.Mesh(new THREE.BoxGeometry(5.4,0.05,2.3), new THREE.MeshStandardMaterial({ color:0x3c4044, roughness:0.98 }));
+  vestibuleFloor.position.set(0,0.23,5.2);
+  store.add(vestibuleFloor);
+
   const leftDoor = new THREE.Mesh(new THREE.BoxGeometry(1.8,3.0,0.08), glassMat);
   const rightDoor = new THREE.Mesh(new THREE.BoxGeometry(1.8,3.0,0.08), glassMat);
-  leftDoor.position.set(-1.85,1.5,6.02);
-  rightDoor.position.set(1.85,1.5,6.02);
+  leftDoor.position.set(-1.3,1.5,6.1);
+  rightDoor.position.set(1.3,1.5,6.1);
   leftDoor.castShadow = true;
   rightDoor.castShadow = true;
   store.add(leftDoor, rightDoor);
+
+  const outerGlassLeft = new THREE.Mesh(new THREE.BoxGeometry(1.1,2.8,0.06), glassMat);
+  outerGlassLeft.position.set(-2.65,1.45,5.55);
+  outerGlassLeft.rotation.y = 0.08;
+  const outerGlassRight = outerGlassLeft.clone();
+  outerGlassRight.position.x = 2.65;
+  outerGlassRight.rotation.y = -0.08;
+  const outerGlassTop = new THREE.Mesh(new THREE.BoxGeometry(5.0,0.42,0.08), glassMat);
+  outerGlassTop.position.set(0,3.05,5.72);
+  store.add(outerGlassLeft, outerGlassRight, outerGlassTop);
 
   const welcomeMat = new THREE.Mesh(
     new THREE.BoxGeometry(3.5,0.04,2.0),
@@ -1489,9 +1644,17 @@ function spawnOxumsGasStation() {
   leftWindow.position.set(-4.6,1.95,6.02);
   store.add(leftWindow);
 
+  const leftWindowFrame = new THREE.Mesh(new THREE.BoxGeometry(3.7,2.38,0.06), entranceFrameMat);
+  leftWindowFrame.position.set(-4.6,1.95,5.95);
+  store.add(leftWindowFrame);
+
   const rightWindow = new THREE.Mesh(new THREE.BoxGeometry(3.4,2.1,0.08), glassMat);
   rightWindow.position.set(4.6,1.95,6.02);
   store.add(rightWindow);
+
+  const rightWindowFrame = leftWindowFrame.clone();
+  rightWindowFrame.position.x = 4.6;
+  store.add(rightWindowFrame);
 
   const roof = new THREE.Mesh(new THREE.BoxGeometry(18.8,0.5,12.8), roofMat);
   roof.position.set(0,4.85,0);
@@ -1741,8 +1904,10 @@ function spawnOxumsGasStation() {
   addBoxColliderMinMax(baseX - 9.4, baseX + 9.4, baseZ - 12.7, baseZ - 11.3);
   addBoxColliderMinMax(baseX - 9.6, baseX - 8.4, baseZ - 12.3, baseZ + 0.2);
   addBoxColliderMinMax(baseX + 8.4, baseX + 9.6, baseZ - 12.3, baseZ + 0.2);
-  addBoxColliderMinMax(baseX - 9.2, baseX - 2.4, baseZ - 0.4, baseZ + 0.8);
-  addBoxColliderMinMax(baseX + 2.4, baseX + 9.2, baseZ - 0.4, baseZ + 0.8);
+  addBoxColliderMinMax(baseX - 9.2, baseX - 2.7, baseZ - 0.4, baseZ + 0.6);
+  addBoxColliderMinMax(baseX + 2.7, baseX + 9.2, baseZ - 0.4, baseZ + 0.6);
+  addBoxColliderMinMax(baseX - 2.2, baseX - 1.7, baseZ + 4.2, baseZ + 6.0);
+  addBoxColliderMinMax(baseX + 1.7, baseX + 2.2, baseZ + 4.2, baseZ + 6.0);
   addBoxCollider(baseX + 4.0, baseZ - 3.8, 2.9, 0.8);
   addBoxCollider(baseX, baseZ - 11.1, 4.1, 0.8);
   addBoxCollider(baseX - 5.3, baseZ - 3.5, 2.0, 0.75);
@@ -1775,40 +1940,48 @@ function spawnOxumsGasStation() {
     boxGroup.rotation.y = Math.random() * Math.PI * 2;
     boxGroup.userData = {
       type:"lootbox",
-      opened:false,
-      loot:lootData
+      loot:lootData,
+      lootTemplate: cloneLootInventory([
+        ...lootData,
+        ...createEmptyLootInventory(Math.max(0, 12 - lootData.length))
+      ].slice(0, 12)),
+      inventory: cloneLootInventory([
+        ...lootData,
+        ...createEmptyLootInventory(Math.max(0, 12 - lootData.length))
+      ].slice(0, 12)),
+      respawnLoot: true,
+      respawnDelayMs: 120000,
+      respawnPending: false
     };
     scene.add(boxGroup);
     interactables.push(boxGroup);
     lootBoxes.push(boxGroup);
 
-    addBoxCollider(baseX + offsetX, baseZ + offsetZ, 0.9, 0.7);
+    boxGroup.userData.colliderRef = addBoxCollider(baseX + offsetX, baseZ + offsetZ, 0.9, 0.7);
   }
 
   spawnLootBox(-6.2, 4.2, [
-    { item:"wood", count:28 },
-    { item:"stone", count:12 },
     { item:"scrap", count:18 },
+    { item:"cloth", count:16 },
     { item:"meat", count:1 }
   ], [0x7b4a22, 0x3e2b18]);
 
   spawnLootBox(6.5, 3.6, [
-    { item:"stone", count:26 },
-    { item:"wood", count:14 },
-    { item:"scrap", count:24 }
+    { item:"scrap", count:24 },
+    { item:"cloth", count:12 },
+    { item:"arrow", count:6 }
   ], [0x91521f, 0x2b2b2b]);
 
   spawnLootBox(-5.3,-5.1, [
-    { item:"wood", count:18 },
-    { item:"stone", count:18 },
     { item:"scrap", count:32 },
+    { item:"cloth", count:20 },
     { item:"meat", count:2 }
   ], [0x6c4427, 0x4d4d4d]);
 
   spawnLootBox(5.5,-4.5, [
-    { item:"stone", count:22 },
-    { item:"wood", count:20 },
-    { item:"scrap", count:27 }
+    { item:"scrap", count:27 },
+    { item:"cloth", count:10 },
+    { item:"arrow", count:8 }
   ], [0x845531, 0x3c2d25]);
 }
 
@@ -1838,9 +2011,10 @@ function generateWorldBiomes() {
       if (biomeType === "forest") {
         const treeCount = 12 + Math.floor(Math.random()*6);
         const rockCount = Math.floor(Math.random()*2);
+        const hempCount = rockCount;
         const boarCount = Math.floor(Math.random()*2);
         const deerCount = 1 + Math.floor(Math.random()*2);
-        const grassCount = 3 + Math.floor(Math.random()*3);
+        const grassCount = 4 + Math.floor(Math.random()*3);
 
         for (let i=0;i<treeCount;i++) {
           const x = centerX + (Math.random()-0.5)*cellSize*0.7;
@@ -1851,6 +2025,11 @@ function generateWorldBiomes() {
           const x = centerX + (Math.random()-0.5)*cellSize*0.6;
           const z = centerZ + (Math.random()-0.5)*cellSize*0.6;
           spawnRock(x,z);
+        }
+        for (let i=0;i<hempCount;i++) {
+          const x = centerX + (Math.random()-0.5)*cellSize*0.65;
+          const z = centerZ + (Math.random()-0.5)*cellSize*0.65;
+          spawnHemp(x,z);
         }
         for (let i=0;i<boarCount;i++) {
           const x = centerX + (Math.random()-0.5)*cellSize*0.8;
@@ -1865,16 +2044,17 @@ function generateWorldBiomes() {
         for (let i=0;i<grassCount;i++) {
           const x = centerX + (Math.random()-0.5)*cellSize*0.95;
           const z = centerZ + (Math.random()-0.5)*cellSize*0.95;
-          spawnGrassPatch(x,z, 3 + Math.floor(Math.random()*3));
+          spawnGrassPatch(x,z, 3 + Math.floor(Math.random()*2));
         }
 
       } else {
         const treeCount = 4 + Math.floor(Math.random()*3);
         const rockCount = Math.floor(Math.random()*2);
+        const hempCount = rockCount;
         const boarCount = Math.floor(Math.random()*2);
         const deerCount = Math.floor(Math.random()*2);
         const bearCount = Math.random() < 0.2 ? 1 : 0;
-        const grassCount = 1 + Math.floor(Math.random()*2);
+        const grassCount = 2 + Math.floor(Math.random()*2);
 
         for (let i=0;i<treeCount;i++) {
           const x = centerX + (Math.random()-0.5)*cellSize*0.8;
@@ -1885,6 +2065,11 @@ function generateWorldBiomes() {
           const x = centerX + (Math.random()-0.5)*cellSize*0.9;
           const z = centerZ + (Math.random()-0.5)*cellSize*0.9;
           spawnRock(x,z);
+        }
+        for (let i=0;i<hempCount;i++) {
+          const x = centerX + (Math.random()-0.5)*cellSize*0.9;
+          const z = centerZ + (Math.random()-0.5)*cellSize*0.9;
+          spawnHemp(x,z);
         }
         for (let i=0;i<boarCount;i++) {
           const x = centerX + (Math.random()-0.5)*cellSize*0.9;
@@ -1925,7 +2110,8 @@ function startWorldGeneration() {
 
 /* ---------------------------------------------------------
 --------------------------------------------------------- */
-const MAX_STACK = 100;
+const DEFAULT_MAX_STACK = 100;
+const LARGE_RESOURCE_STACK = 1000;
 const SLOT_COUNT = 21;
 const HOTBAR_SLOTS = 6;
 
@@ -1959,12 +2145,98 @@ const craftProgressFill = document.getElementById("craftProgressFill");
 const buildMenu = document.getElementById("buildMenu");
 const inventorySlotEls = [];
 const lootSlotEls = [];
+const lootTitle = lootPanel.querySelector("h3");
+
+function createEmptyLootInventory(size = LOOT_SLOT_COUNT) {
+  return Array.from({ length:size }, () => ({ item:null, count:0 }));
+}
+
+function cloneLootInventory(items = []) {
+  return items.map(slot => ({
+    item: slot?.item || null,
+    count: slot?.count || 0
+  }));
+}
+
+function isLootInventoryEmpty(inventory) {
+  if (!inventory) return true;
+  return inventory.every(slot => !slot?.item || (slot.count || 0) <= 0);
+}
+
+function scheduleLootBoxRespawn(box) {
+  if (!box?.userData || box.userData.respawnPending) return;
+  box.userData.respawnPending = true;
+  box.visible = false;
+  removeFromArray(interactables, box);
+  removeFromArray(lootBoxes, box);
+  if (box.userData.colliderRef) removeFromArray(boxColliders, box.userData.colliderRef);
+
+  setTimeout(() => {
+    if (!box.userData) return;
+    box.userData.inventory = cloneLootInventory(box.userData.lootTemplate || createEmptyLootInventory());
+    box.userData.respawnPending = false;
+    box.visible = true;
+    if (!interactables.includes(box)) interactables.push(box);
+    if (!lootBoxes.includes(box)) lootBoxes.push(box);
+    if (!box.userData.colliderRef) {
+      const pos = new THREE.Vector3();
+      box.getWorldPosition(pos);
+      box.userData.colliderRef = addBoxCollider(pos.x, pos.z, 0.9, 0.7);
+    } else if (!boxColliders.includes(box.userData.colliderRef)) {
+      boxColliders.push(box.userData.colliderRef);
+    }
+  }, box.userData.respawnDelayMs || 120000);
+}
+
+function consumeLootBoxIfNeeded(box) {
+  if (!box?.userData?.respawnLoot) return;
+  if (!isLootInventoryEmpty(box.userData.inventory)) return;
+  scheduleLootBoxRespawn(box);
+}
+
+function loadLootSlotsFromBox(box) {
+  const inventory = box?.userData?.inventory || createEmptyLootInventory();
+  for (let i=0; i<LOOT_SLOT_COUNT; i++) {
+    const source = inventory[i] || { item:null, count:0 };
+    lootSlots[i].item = source.item || null;
+    lootSlots[i].count = source.count || 0;
+  }
+}
+
+function syncCurrentLootBoxFromLootSlots() {
+  if (!currentLootBox || !currentLootBox.userData) return;
+  currentLootBox.userData.inventory = cloneLootInventory(lootSlots);
+}
+
+function closeLootPanelState() {
+  const box = currentLootBox;
+  syncCurrentLootBoxFromLootSlots();
+  consumeLootBoxIfNeeded(box);
+  lootOpen = false;
+  currentLootBox = null;
+  lootTitle.textContent = "Loot";
+  if (inventoryOpenedByLoot) inventoryOpen = false;
+  inventoryOpenedByLoot = false;
+  updatePanelLayout();
+}
+
+function getLootBoxDisplayName(box) {
+  if (!box?.userData) return "Loot";
+  if (box.userData.boxKind === "tool_cupboard") return "Tool Cupboard";
+  if (box.userData.boxKind === "storage_box") return "Storage Box";
+  return "Loot";
+}
 
 const recipes = [
   { id:"axe", name:"Stone Axe", time:5, produces:{ item:"axe", count:1 }, costs:[{ item:"wood", count:3 }, { item:"stone", count:2 }] },
   { id:"pickaxe", name:"Stone Pickaxe", time:5, produces:{ item:"pickaxe", count:1 }, costs:[{ item:"wood", count:3 }, { item:"stone", count:3 }] },
+  { id:"bow", name:"Hunting Bow", time:5, produces:{ item:"bow", count:1 }, costs:[{ item:"wood", count:25 }, { item:"cloth", count:30 }] },
+  { id:"arrow", name:"Wooden Arrows", time:5, produces:{ item:"arrow", count:5 }, costs:[{ item:"wood", count:10 }, { item:"stone", count:5 }] },
   { id:"building_plan", name:"Building Plan", time:5, produces:{ item:"building_plan", count:1 }, costs:[{ item:"wood", count:20 }, { item:"scrap", count:5 }] },
   { id:"hammer", name:"Hammer", time:5, produces:{ item:"hammer", count:1 }, costs:[{ item:"wood", count:15 }, { item:"stone", count:10 }] },
+  { id:"tool_cupboard", name:"Tool Cupboard", time:5, produces:{ item:"tool_cupboard", count:1 }, costs:[{ item:"wood", count:100 }, { item:"stone", count:50 }, { item:"scrap", count:20 }] },
+  { id:"storage_box", name:"Storage Box", time:5, produces:{ item:"storage_box", count:1 }, costs:[{ item:"wood", count:60 }] },
+  { id:"workbench_t1", name:"Workbench T1", time:5, produces:{ item:"workbench_t1", count:1 }, costs:[{ item:"wood", count:125 }, { item:"stone", count:50 }, { item:"scrap", count:75 }] },
   { id:"single_wood_door", name:"Single Wood Door", time:5, produces:{ item:"single_wood_door", count:1 }, costs:[{ item:"wood", count:20 }] },
   { id:"double_wood_door", name:"Double Wood Door", time:5, produces:{ item:"double_wood_door", count:1 }, costs:[{ item:"wood", count:35 }] }
 ];
@@ -1976,12 +2248,19 @@ const buildPieces = [
   { id:"wall", name:"Wall", costs:[{ item:"wood", count:20 }], size:{ x:4, y:3, z:0.35 }, category:"wall", socket:"wall" },
   { id:"single_door_frame", name:"Single Door Frame", costs:[{ item:"wood", count:25 }], size:{ x:4, y:3, z:0.35 }, category:"wall", socket:"wall", doorType:"single" },
   { id:"double_door_frame", name:"Double Door Frame", costs:[{ item:"wood", count:35 }], size:{ x:4, y:3, z:0.35 }, category:"wall", socket:"wall", doorType:"double" },
+  { id:"tool_cupboard", name:"Tool Cupboard", costs:[{ item:"tool_cupboard", count:1 }], size:{ x:1.4, y:1.95, z:0.72 }, category:"deployable", socket:"deployable" },
+  { id:"storage_box", name:"Storage Box", costs:[{ item:"storage_box", count:1 }], size:{ x:1.45, y:0.9, z:0.95 }, category:"deployable", socket:"deployable" },
+  { id:"workbench_t1", name:"Workbench T1", costs:[{ item:"workbench_t1", count:1 }], size:{ x:1.6, y:1.9, z:0.9 }, category:"deployable", socket:"deployable" },
   { id:"single_wood_door", name:"Single Wood Door", costs:[{ item:"single_wood_door", count:1 }], size:{ x:1.7, y:2.7, z:0.14 }, category:"door", doorType:"single" },
   { id:"double_wood_door", name:"Double Wood Door", costs:[{ item:"double_wood_door", count:1 }], size:{ x:3.3, y:2.7, z:0.14 }, category:"door", doorType:"double" }
 ];
 
 const placedBuilds = [];
+const BUILD_DECAY_SECONDS = 240;
+let upkeepCycleRemaining = BUILD_DECAY_SECONDS;
+let decayTickAccum = 0;
 let activeCraft = null;
+const craftQueue = [];
 const buildPreview = new THREE.Group();
 buildPreview.visible = false;
 scene.add(buildPreview);
@@ -2054,34 +2333,66 @@ inventoryTabBtn.addEventListener("click", () => setInventoryTab("inventory"));
 craftingTabBtn.addEventListener("click", () => setInventoryTab("crafting"));
 
 function itemName(id) {
+  if (id === "rock") return "Rock";
   if (id === "wood") return "Wood";
   if (id === "stone") return "Stone";
+  if (id === "torch") return "Torch";
+  if (id === "cloth") return "Cloth";
   if (id === "meat") return "Meat";
   if (id === "scrap") return "Scrap";
   if (id === "axe") return "Axe";
   if (id === "pickaxe") return "Pickaxe";
+  if (id === "bow") return "Bow";
+  if (id === "arrow") return "Arrows";
   if (id === "building_plan") return "Plan";
   if (id === "hammer") return "Hammer";
+  if (id === "tool_cupboard") return "TC";
+  if (id === "storage_box") return "Box";
+  if (id === "workbench_t1") return "WB";
   if (id === "single_wood_door") return "Single Door";
   if (id === "double_wood_door") return "Double Door";
   return "";
 }
 
 function itemIcon(id) {
+  if (id === "rock") return "RK";
+  if (id === "cloth") return "CL";
+  if (id === "bow") return "BW";
+  if (id === "arrow") return "AR";
   if (id === "wood") return "🪵";
   if (id === "stone") return "🪨";
+  if (id === "torch") return "🔥";
   if (id === "meat") return "🥩";
   if (id === "scrap") return "⚙️";
   if (id === "axe") return "🪓";
   if (id === "pickaxe") return "⛏️";
   if (id === "building_plan") return "📘";
   if (id === "hammer") return "🔨";
+  if (id === "tool_cupboard") return "TC";
+  if (id === "storage_box") return "BX";
+  if (id === "workbench_t1") return "WB";
+  if (id === "single_wood_door") return "SD";
+  if (id === "double_wood_door") return "DD";
   return "";
 }
 
 const healthSpan = document.getElementById("health");
 const hungerSpan = document.getElementById("hunger");
 const waterSpan = document.getElementById("water");
+
+function getVitalColor(value) {
+  const pct = THREE.MathUtils.clamp(value / 100, 0, 1);
+  const hue = 6 + pct * 88;
+  const saturation = 56 + pct * 12;
+  const lightness = 42 + pct * 15;
+  return `hsl(${hue.toFixed(0)} ${saturation.toFixed(0)}% ${lightness.toFixed(0)}%)`;
+}
+
+function setVitalVisual(el, value) {
+  const rounded = Math.max(0, Math.round(value));
+  el.textContent = rounded;
+  el.style.color = getVitalColor(rounded);
+}
 
 function updatePanelLayout() {
   const invVisible = inventoryOpen || lootOpen;
@@ -2141,17 +2452,22 @@ function refreshLootUI() {
 }
 
 function updateHud() {
-  healthSpan.textContent = Math.round(player.health);
-  hungerSpan.textContent = Math.round(player.hunger);
-  waterSpan.textContent = Math.round(player.water);
+  setVitalVisual(healthSpan, player.health);
+  setVitalVisual(hungerSpan, player.hunger);
+  setVitalVisual(waterSpan, player.water);
+}
+
+function getMaxStack(item) {
+  return item === "wood" || item === "stone" ? LARGE_RESOURCE_STACK : DEFAULT_MAX_STACK;
 }
 
 function addItem(type, amount) {
+  const maxStack = getMaxStack(type);
   while (amount > 0) {
     for (let i=0;i<SLOT_COUNT && amount>0;i++) {
       const s = slots[i];
-      if (s.item === type && s.count < MAX_STACK) {
-        const space = MAX_STACK - s.count;
+      if (s.item === type && s.count < maxStack) {
+        const space = maxStack - s.count;
         const add = Math.min(space, amount);
         s.count += add;
         amount -= add;
@@ -2164,7 +2480,7 @@ function addItem(type, amount) {
       if (!slots[i].item) { emptyIndex = i; break; }
     }
     if (emptyIndex === -1) break;
-    const add = Math.min(MAX_STACK, amount);
+    const add = Math.min(maxStack, amount);
     slots[emptyIndex].item = type;
     slots[emptyIndex].count = add;
     amount -= add;
@@ -2197,8 +2513,56 @@ function totalOf(type) {
   return t;
 }
 
+function consumeSelectedFood() {
+  const slot = slots[selectedHotbar];
+  if (!slot || slot.item !== "meat" || slot.count <= 0) return false;
+  slot.count -= 1;
+  if (slot.count <= 0) {
+    slot.item = null;
+    slot.count = 0;
+  }
+  player.hunger = Math.min(100, player.hunger + 38);
+  player.water = Math.min(100, player.water + 14);
+  player.health = Math.min(100, player.health + 6);
+  refreshInventoryUI();
+  updateEquippedTool();
+  spawnParticles(player.pos.clone().add(new THREE.Vector3(0, 1.2, 0)), "meat", 8);
+  return true;
+}
+
 function hasRecipeCosts(recipe) {
   return recipe.costs.every(cost => totalOf(cost.item) >= cost.count);
+}
+
+function enqueueCraft(recipe) {
+  for (const cost of recipe.costs) removeItem(cost.item, cost.count);
+
+  const queued = craftQueue.find(entry => entry.id === recipe.id);
+  if (queued) {
+    queued.count += 1;
+  } else {
+    craftQueue.push({
+      id: recipe.id,
+      name: recipe.name,
+      time: recipe.time,
+      produces: recipe.produces,
+      count: 1
+    });
+  }
+
+  if (!activeCraft) startNextCraft();
+}
+
+function startNextCraft() {
+  if (activeCraft || craftQueue.length === 0) return;
+  const next = craftQueue[0];
+  activeCraft = {
+    id: next.id,
+    name: next.name,
+    time: next.time,
+    startedAt: performance.now(),
+    produces: next.produces
+  };
 }
 
 function setInventoryTab(tab) {
@@ -2218,7 +2582,10 @@ function updateCraftQueueUI() {
 
   const elapsed = performance.now() - activeCraft.startedAt;
   const progress = Math.min(elapsed / (activeCraft.time * 1000), 1);
-  craftQueueText.textContent = "Crafting " + activeCraft.name + "... " + Math.ceil(Math.max(0, activeCraft.time - elapsed / 1000)) + "s";
+  const queued = craftQueue.find(entry => entry.id === activeCraft.id);
+  const remainingCount = queued ? queued.count : 1;
+  const totalQueued = craftQueue.reduce((sum, entry) => sum + entry.count, 0);
+  craftQueueText.textContent = "Crafting " + activeCraft.name + " x" + remainingCount + "... " + Math.ceil(Math.max(0, activeCraft.time - elapsed / 1000)) + "s" + (totalQueued > remainingCount ? " | Queue: " + totalQueued : "");
   craftProgressFill.style.width = (progress * 100).toFixed(0) + "%";
 }
 
@@ -2227,25 +2594,21 @@ function renderCraftingRecipes() {
   for (const recipe of recipes) {
     const card = document.createElement("button");
     card.className = "recipeCard";
-    const canCraft = hasRecipeCosts(recipe) && !activeCraft;
+    const canCraft = hasRecipeCosts(recipe);
     if (!canCraft) card.classList.add("disabled");
+    const queued = craftQueue.find(entry => entry.id === recipe.id);
+    const queuedCount = queued ? queued.count : 0;
 
     const costs = recipe.costs.map(cost => itemName(cost.item) + " x" + cost.count).join(", ");
     card.innerHTML = `
       <div class="recipeTitle">${recipe.name}</div>
       <div class="recipeMeta">Craft time: ${recipe.time}s</div>
       <div class="recipeMeta">Cost: ${costs}</div>
+      <div class="recipeMeta">${queuedCount > 0 ? "Queued: x" + queuedCount : "Click again to queue more"}</div>
     `;
     card.addEventListener("click", () => {
-      if (!hasRecipeCosts(recipe) || activeCraft) return;
-      for (const cost of recipe.costs) removeItem(cost.item, cost.count);
-      activeCraft = {
-        id: recipe.id,
-        name: recipe.name,
-        time: recipe.time,
-        startedAt: performance.now(),
-        produces: recipe.produces
-      };
+      if (!hasRecipeCosts(recipe)) return;
+      enqueueCraft(recipe);
       updateCraftQueueUI();
       renderCraftingRecipes();
     });
@@ -2258,13 +2621,144 @@ function finishCraftingIfReady() {
   const elapsed = performance.now() - activeCraft.startedAt;
   if (elapsed < activeCraft.time * 1000) return;
   addItem(activeCraft.produces.item, activeCraft.produces.count);
+  const queued = craftQueue[0];
+  if (queued && queued.id === activeCraft.id) {
+    queued.count -= 1;
+    if (queued.count <= 0) craftQueue.shift();
+  }
   activeCraft = null;
+  startNextCraft();
   updateCraftQueueUI();
   renderCraftingRecipes();
 }
 
 function costsText(costs) {
   return costs.map(cost => itemName(cost.item) + " x" + cost.count).join(", ");
+}
+
+function getToolCupboards() {
+  return placedBuilds
+    .map(build => build.root)
+    .filter(root => root?.userData?.boxKind === "tool_cupboard");
+}
+
+function getLootInventoryTotal(box, itemId) {
+  const inventory = box?.userData?.inventory || [];
+  let total = 0;
+  for (const slot of inventory) {
+    if (slot.item === itemId) total += slot.count || 0;
+  }
+  return total;
+}
+
+function takeFromLootInventory(box, itemId, amount) {
+  const inventory = box?.userData?.inventory || [];
+  for (const slot of inventory) {
+    if (amount <= 0) break;
+    if (slot.item !== itemId) continue;
+    const take = Math.min(slot.count || 0, amount);
+    slot.count -= take;
+    amount -= take;
+    if (slot.count <= 0) {
+      slot.item = null;
+      slot.count = 0;
+    }
+  }
+  return amount;
+}
+
+function getUpkeepTrackedBuilds() {
+  return placedBuilds.filter(build => {
+    if (!build?.root || build.root.userData?.isDoor && !build.root.parent) return false;
+    const piece = build.piece || getBuildPiece(build.root.userData?.pieceId || build.type);
+    return piece && piece.category !== "deployable";
+  });
+}
+
+function getUpkeepCostForBuild(build) {
+  const piece = build?.piece || getBuildPiece(build?.root?.userData?.pieceId || build?.type);
+  if (!piece) return { wood:0, stone:0 };
+  if (piece.category === "door") return { wood:12, stone:0 };
+  const tier = build.root.userData?.tier || build.tier || "twig";
+  if (tier === "stone") return { wood:0, stone:50 };
+  if (tier === "wood") return { wood:35, stone:0 };
+  return { wood:20, stone:0 };
+}
+
+function getBaseUpkeepCosts() {
+  const totals = { wood:0, stone:0 };
+  for (const build of getUpkeepTrackedBuilds()) {
+    const cost = getUpkeepCostForBuild(build);
+    totals.wood += cost.wood;
+    totals.stone += cost.stone;
+  }
+  return totals;
+}
+
+function canPayTcUpkeep(costs) {
+  const cupboards = getToolCupboards();
+  if (!cupboards.length) return false;
+  let wood = 0;
+  let stone = 0;
+  for (const tc of cupboards) {
+    wood += getLootInventoryTotal(tc, "wood");
+    stone += getLootInventoryTotal(tc, "stone");
+  }
+  return wood >= costs.wood && stone >= costs.stone;
+}
+
+function payTcUpkeep(costs) {
+  let woodRemaining = costs.wood;
+  let stoneRemaining = costs.stone;
+  for (const tc of getToolCupboards()) {
+    if (woodRemaining > 0) woodRemaining = takeFromLootInventory(tc, "wood", woodRemaining);
+    if (stoneRemaining > 0) stoneRemaining = takeFromLootInventory(tc, "stone", stoneRemaining);
+  }
+  if (currentLootBox && currentLootBox.userData?.boxKind === "tool_cupboard") {
+    loadLootSlotsFromBox(currentLootBox);
+    refreshLootUI();
+  }
+  return woodRemaining <= 0 && stoneRemaining <= 0;
+}
+
+function updateToolCupboardDecay(delta) {
+  const trackedBuilds = getUpkeepTrackedBuilds();
+  if (!trackedBuilds.length) {
+    upkeepCycleRemaining = BUILD_DECAY_SECONDS;
+    return;
+  }
+
+  decayTickAccum += delta;
+  while (decayTickAccum >= 1) {
+    decayTickAccum -= 1;
+    const cupboards = getToolCupboards();
+    const upkeepCosts = getBaseUpkeepCosts();
+    const hasCoverage = cupboards.length > 0 && canPayTcUpkeep(upkeepCosts);
+
+    if (hasCoverage) {
+      upkeepCycleRemaining -= 1;
+      if (upkeepCycleRemaining <= 0) {
+        if (!payTcUpkeep(upkeepCosts)) {
+          upkeepCycleRemaining = 0;
+        } else {
+          upkeepCycleRemaining = BUILD_DECAY_SECONDS;
+        }
+      }
+      for (const build of trackedBuilds) build.root.userData.decayTime = BUILD_DECAY_SECONDS;
+      continue;
+    }
+
+    upkeepCycleRemaining = 0;
+
+    for (let i=trackedBuilds.length-1; i>=0; i--) {
+      const build = trackedBuilds[i];
+      const root = build.root;
+      root.userData.decayTime = (root.userData.decayTime ?? BUILD_DECAY_SECONDS) - 1;
+      if (root.userData.decayTime <= 0) {
+        removePlacedBuild(root);
+      }
+    }
+  }
 }
 
 function getBuildPiece(id) {
@@ -2329,6 +2823,43 @@ function createBuildVisual(piece, tier = "twig", preview = false) {
   const isWallLike = piece.id === "wall" || isFrame;
   const openingWidth = piece.id === "double_door_frame" ? 3.0 : 1.65;
 
+  if (piece.id === "storage_box") {
+    addMesh(new THREE.BoxGeometry(1.38, 0.7, 0.92), mats.panel, 0, 0.35, 0);
+    addMesh(new THREE.BoxGeometry(1.44, 0.14, 0.98), mats.beam, 0, 0.8, 0);
+    addMesh(new THREE.BoxGeometry(0.12, 0.82, 0.96), mats.beam, -0.66, 0.38, 0);
+    addMesh(new THREE.BoxGeometry(0.12, 0.82, 0.96), mats.beam, 0.66, 0.38, 0);
+    addMesh(new THREE.BoxGeometry(1.18, 0.12, 0.12), mats.detail, 0, 0.24, 0.42);
+    addMesh(new THREE.BoxGeometry(1.18, 0.12, 0.12), mats.detail, 0, 0.24, -0.42);
+    return { group, highlightMeshes };
+  }
+
+  if (piece.id === "tool_cupboard") {
+    addMesh(new THREE.BoxGeometry(1.12, 1.84, 0.58), mats.panel, 0, 0.92, 0);
+    addMesh(new THREE.BoxGeometry(1.18, 1.9, 0.08), mats.beam, 0, 0.95, 0.29);
+    addMesh(new THREE.BoxGeometry(0.12, 1.82, 0.64), mats.beam, -0.52, 0.91, 0);
+    addMesh(new THREE.BoxGeometry(0.12, 1.82, 0.64), mats.beam, 0.52, 0.91, 0);
+    addMesh(new THREE.BoxGeometry(0.84, 0.12, 0.06), mats.detail, 0, 1.42, 0.33);
+    addMesh(new THREE.BoxGeometry(0.84, 0.12, 0.06), mats.detail, 0, 0.56, 0.33);
+    addMesh(new THREE.BoxGeometry(0.08, 0.42, 0.04), mats.detail, 0.34, 0.96, 0.35);
+    return { group, highlightMeshes };
+  }
+
+  if (piece.id === "workbench_t1") {
+    addMesh(new THREE.BoxGeometry(1.56, 0.12, 0.82), mats.beam, 0, 1.08, 0);
+    addMesh(new THREE.BoxGeometry(1.46, 0.1, 0.32), mats.detail, 0, 1.6, -0.18);
+    addMesh(new THREE.BoxGeometry(0.16, 1.78, 0.16), mats.beam, -0.62, 0.89, -0.24);
+    addMesh(new THREE.BoxGeometry(0.16, 1.78, 0.16), mats.beam, 0.62, 0.89, -0.24);
+    addMesh(new THREE.BoxGeometry(0.16, 1.26, 0.16), mats.beam, -0.62, 0.63, 0.24);
+    addMesh(new THREE.BoxGeometry(0.16, 1.26, 0.16), mats.beam, 0.62, 0.63, 0.24);
+    addMesh(new THREE.BoxGeometry(1.46, 0.1, 0.14), mats.beam, 0, 0.44, 0.24);
+    addMesh(new THREE.BoxGeometry(1.18, 0.36, 0.18), mats.detail, 0, 1.34, 0.2);
+    addMesh(new THREE.BoxGeometry(0.42, 0.28, 0.28), mats.detail, -0.28, 1.28, -0.18);
+    addMesh(new THREE.BoxGeometry(0.3, 0.18, 0.24), mats.panel, 0.36, 1.26, -0.16);
+    addMesh(new THREE.BoxGeometry(0.5, 0.08, 0.28), mats.detail, -0.3, 1.76, -0.1);
+    addMesh(new THREE.BoxGeometry(0.8, 0.08, 0.08), mats.beam, 0, 1.88, -0.08);
+    return { group, highlightMeshes };
+  }
+
   if (piece.id === "foundation") {
     addMesh(new THREE.BoxGeometry(4, 0.9, 4), mats.panel, 0, 0.45, 0);
     addMesh(new THREE.BoxGeometry(3.8, 0.2, 3.8), mats.beam, 0, 0.95, 0);
@@ -2354,8 +2885,10 @@ function createBuildVisual(piece, tier = "twig", preview = false) {
       addMesh(new THREE.BoxGeometry(0.22, 3.0, 0.18), mats.beam, -1.78, 1.5, 0);
       addMesh(new THREE.BoxGeometry(0.22, 3.0, 0.18), mats.beam, 1.78, 1.5, 0);
       addMesh(new THREE.BoxGeometry(4.0, 0.2, 0.18), mats.beam, 0, 2.82, 0);
-      addMesh(new THREE.BoxGeometry(4.95, 0.14, 0.16), mats.detail, 0, 1.5, 0, 0, 0, 0.76);
-      addMesh(new THREE.BoxGeometry(4.95, 0.14, 0.16), mats.detail, 0, 1.5, 0, 0, 0, -0.76);
+      addMesh(new THREE.BoxGeometry(piece.id === "double_door_frame" ? 1.9 : 1.5, 0.14, 0.16), mats.detail, piece.id === "double_door_frame" ? -0.92 : -0.48, 1.56, 0.02, 0, 0, 0.82);
+      addMesh(new THREE.BoxGeometry(piece.id === "double_door_frame" ? 1.9 : 1.5, 0.14, 0.16), mats.detail, piece.id === "double_door_frame" ? 0.92 : 0.48, 1.44, 0.02, 0, 0, -0.82);
+      addMesh(new THREE.BoxGeometry(0.16, 2.5, 0.14), mats.detail, piece.id === "double_door_frame" ? -1.0 : -0.58, 1.48, 0.03, 0, 0, 0.1);
+      addMesh(new THREE.BoxGeometry(0.16, 2.5, 0.14), mats.detail, piece.id === "double_door_frame" ? 1.0 : 0.58, 1.48, 0.03, 0, 0, -0.1);
     } else {
       addMesh(new THREE.BoxGeometry(5.1, 0.16, 0.18), mats.detail, 0, 1.5, 0, 0, 0, 0.66);
       addMesh(new THREE.BoxGeometry(5.1, 0.16, 0.18), mats.detail, 0, 1.5, 0, 0, 0, -0.66);
@@ -2364,18 +2897,28 @@ function createBuildVisual(piece, tier = "twig", preview = false) {
   }
 
   if (isWallLike && tier === "wood") {
-    if (!isFrame) addMesh(new THREE.BoxGeometry(3.72, 2.74, 0.12), mats.panel, 0, 1.5, -0.02);
-    for (let x=-1.56; x<=1.56; x+=0.42) {
-      if (isFrame && Math.abs(x) < openingWidth * 0.5) continue;
-      addMesh(new THREE.BoxGeometry(0.24, 2.86, 0.16), mats.detail, x, 1.5, 0.02);
+    if (!isFrame) {
+      addMesh(new THREE.BoxGeometry(3.86, 2.86, 0.14), mats.panel, 0, 1.5, -0.03);
+      addMesh(new THREE.BoxGeometry(3.72, 2.72, 0.08), mats.detail, 0, 1.5, 0.08);
+      for (let y=0.52; y<=2.46; y+=0.42) {
+        addMesh(new THREE.BoxGeometry(3.74, 0.18, 0.18), mats.detail, 0, y, 0.11);
+      }
+    } else {
+      addMesh(new THREE.BoxGeometry(0.36, 2.92, 0.2), mats.detail, -1.76, 1.5, 0.04);
+      addMesh(new THREE.BoxGeometry(0.36, 2.92, 0.2), mats.detail, 1.76, 1.5, 0.04);
+      addMesh(new THREE.BoxGeometry(4.0, 0.26, 0.22), mats.beam, 0, 2.82, 0.05);
+      addMesh(new THREE.BoxGeometry(4.0, 0.18, 0.18), mats.beam, 0, 0.3, 0.05);
+      addMesh(new THREE.BoxGeometry(piece.id === "double_door_frame" ? 1.7 : 1.28, 0.16, 0.16), mats.beam, piece.id === "double_door_frame" ? -0.92 : -0.58, 1.62, 0.08, 0, 0, 0.88);
+      addMesh(new THREE.BoxGeometry(piece.id === "double_door_frame" ? 1.7 : 1.28, 0.16, 0.16), mats.beam, piece.id === "double_door_frame" ? 0.92 : 0.58, 1.62, 0.08, 0, 0, -0.88);
     }
-    addMesh(new THREE.BoxGeometry(3.92, 0.18, 0.2), mats.beam, 0, 0.34, 0.04);
-    addMesh(new THREE.BoxGeometry(3.92, 0.18, 0.2), mats.beam, 0, 1.5, 0.04);
-    addMesh(new THREE.BoxGeometry(3.92, 0.18, 0.2), mats.beam, 0, 2.66, 0.04);
+    if (!isFrame) {
+      addMesh(new THREE.BoxGeometry(3.92, 0.18, 0.2), mats.beam, 0, 0.34, 0.04);
+      addMesh(new THREE.BoxGeometry(3.92, 0.18, 0.2), mats.beam, 0, 1.5, 0.04);
+      addMesh(new THREE.BoxGeometry(3.92, 0.18, 0.2), mats.beam, 0, 2.66, 0.04);
+    }
     if (isFrame) {
       addMesh(new THREE.BoxGeometry(0.26, 3.0, 0.2), mats.beam, -1.78, 1.5, 0.04);
       addMesh(new THREE.BoxGeometry(0.26, 3.0, 0.2), mats.beam, 1.78, 1.5, 0.04);
-      addMesh(new THREE.BoxGeometry(4.0, 0.22, 0.22), mats.beam, 0, 2.82, 0.04);
     } else {
       addMesh(new THREE.BoxGeometry(5.05, 0.16, 0.16), mats.beam, 0, 1.5, 0.08, 0, 0, 0.66);
       addMesh(new THREE.BoxGeometry(5.05, 0.16, 0.16), mats.beam, 0, 1.5, 0.08, 0, 0, -0.66);
@@ -2384,7 +2927,7 @@ function createBuildVisual(piece, tier = "twig", preview = false) {
   }
 
   if (isWallLike && tier === "stone") {
-    addMesh(new THREE.BoxGeometry(3.94, 2.98, isFrame ? 0.26 : 0.28), mats.panel, 0, 1.5, 0);
+    if (!isFrame) addMesh(new THREE.BoxGeometry(3.94, 2.98, 0.28), mats.panel, 0, 1.5, 0);
     const blocks = [
       [-1.25, 0.48, 0.86, 0.44], [-0.18, 0.46, 0.74, 0.36], [0.96, 0.5, 0.9, 0.42],
       [-1.48, 1.18, 0.72, 0.34], [-0.52, 1.22, 0.88, 0.4], [0.58, 1.14, 0.8, 0.32], [1.46, 1.24, 0.64, 0.32],
@@ -2395,10 +2938,12 @@ function createBuildVisual(piece, tier = "twig", preview = false) {
       if (isFrame && Math.abs(x) < openingWidth * 0.5 && y < 2.42) continue;
       addMesh(new THREE.BoxGeometry(w, h, 0.08), mats.detail, x, y, 0.16);
     }
+    if (!isFrame) addMesh(new THREE.BoxGeometry(3.72, 2.76, 0.08), mats.beam, 0, 1.5, 0.2);
     if (isFrame) {
       addMesh(new THREE.BoxGeometry(0.34, 3.0, 0.34), mats.beam, -1.82, 1.5, 0);
       addMesh(new THREE.BoxGeometry(0.34, 3.0, 0.34), mats.beam, 1.82, 1.5, 0);
       addMesh(new THREE.BoxGeometry(4.0, 0.32, 0.34), mats.beam, 0, 2.84, 0);
+      addMesh(new THREE.BoxGeometry(4.0, 0.22, 0.28), mats.beam, 0, 0.22, 0.08);
     }
     return { group, highlightMeshes };
   }
@@ -2421,6 +2966,42 @@ function getTargetedBuild() {
   return getLookTargetFrom(roots, 8);
 }
 
+function getNearestAvailableDoorFrame(doorType, maxDist = 8.5) {
+  let nearest = null;
+  let best = maxDist;
+  for (const build of placedBuilds) {
+    const root = build.root;
+    if (!root.userData.frameType || root.userData.frameType !== doorType || root.userData.hasDoor) continue;
+    const dx = root.position.x - player.pos.x;
+    const dz = root.position.z - player.pos.z;
+    const dist = Math.sqrt(dx*dx + dz*dz);
+    if (dist < best) {
+      best = dist;
+      nearest = root;
+    }
+  }
+  return nearest;
+}
+
+function resolveBuildInteractionTarget(build) {
+  if (!build) return null;
+  if (build.userData.isDoor && build.parent && build.parent.userData && build.parent.userData.frameType) {
+    return build.parent;
+  }
+  return build;
+}
+
+function getSelectedDoorPiece() {
+  const slot = slots[selectedHotbar];
+  if (!slot) return null;
+  if (slot.item === "single_wood_door") return getBuildPiece("single_wood_door");
+  if (slot.item === "double_wood_door") return getBuildPiece("double_wood_door");
+  if (slot.item === "tool_cupboard") return getBuildPiece("tool_cupboard");
+  if (slot.item === "storage_box") return getBuildPiece("storage_box");
+  if (slot.item === "workbench_t1") return getBuildPiece("workbench_t1");
+  return null;
+}
+
 function getTargetedLootBox() {
   ray.setFromCamera({x:0,y:0}, camera);
   const hits = ray.intersectObjects(interactables, true);
@@ -2428,6 +3009,26 @@ function getTargetedLootBox() {
   let obj = hits[0].object;
   while (obj.parent && obj.parent !== scene) obj = obj.parent;
   return obj.userData && obj.userData.type === "lootbox" ? obj : null;
+}
+
+function getTargetedHemp() {
+  ray.setFromCamera({x:0,y:0}, camera);
+  const hits = ray.intersectObjects(interactables, true);
+  if (!hits.length || hits[0].distance > 5) return null;
+  let obj = hits[0].object;
+  while (obj.parent && obj.parent !== scene) obj = obj.parent;
+  return obj.userData && obj.userData.type === "hemp" ? obj : null;
+}
+
+function harvestHemp(plant) {
+  if (!plant || plant.userData.type !== "hemp") return;
+  const biomeHint = getBiomeAt(plant.position.x, plant.position.z);
+  addItem("cloth", plant.userData.cloth || 10);
+  spawnParticles(plant.position.clone().add(new THREE.Vector3(0, 0.6, 0)), "cloth", 12);
+  scene.remove(plant);
+  removeFromArray(interactables, plant);
+  removeFromArray(hempPlants, plant);
+  respawnWorldResource("hemp", biomeHint, 2600);
 }
 
 function getBuildSnapHit(maxDist = 8) {
@@ -2444,14 +3045,114 @@ function getBuildSnapHit(maxDist = 8) {
 function getBuildLayer(piece) {
   if (!piece) return "wall";
   if (piece.category === "door") return "door";
+  if (piece.category === "deployable") return "deployable";
   if (piece.id === "ceiling") return "ceiling";
   if (piece.id === "floor" || piece.id === "foundation") return "floor";
   return "wall";
 }
 
+function roundToBuildGrid(value) {
+  return Math.round(value / 4) * 4;
+}
+
+function roundToDeployGrid(value) {
+  return Math.round(value * 4) / 4;
+}
+
+function getPlacementSurfaceHit(maxDist = 8) {
+  const buildSurfaces = placedBuilds
+    .filter(b => {
+      if (!b?.root || b.root.userData.isDoor) return false;
+      const piece = b.piece || getBuildPiece(b.root.userData.pieceId || b.root.userData.buildType);
+      return piece && (piece.id === "foundation" || piece.id === "floor" || piece.id === "ceiling");
+    })
+    .map(b => b.root);
+  const targets = [...placementSurfaceMeshes, ...buildSurfaces];
+  ray.setFromCamera({x:0,y:0}, camera);
+  const hits = ray.intersectObjects(targets, true);
+  for (const hit of hits) {
+    if (hit.distance > maxDist) continue;
+    let root = hit.object;
+    while (root.parent && root.parent !== scene && !root.userData.isPlacedBuild) root = root.parent;
+    return {
+      root: root.userData?.isPlacedBuild ? root : null,
+      point: hit.point.clone(),
+      normal: hit.face ? hit.face.normal.clone() : new THREE.Vector3(0, 1, 0)
+    };
+  }
+  return null;
+}
+
+function getWallSocketIndexFromLocal(localPoint) {
+  if (Math.abs(localPoint.x) > Math.abs(localPoint.z)) {
+    return localPoint.x >= 0 ? 0 : 2;
+  }
+  return localPoint.z >= 0 ? 1 : 3;
+}
+
+function getWallSocketPlacement(cellX, cellZ, socketIndex) {
+  if (socketIndex === 0) return { x: cellX + 2, z: cellZ, yaw: Math.PI * 0.5, socketIndex };
+  if (socketIndex === 1) return { x: cellX, z: cellZ + 2, yaw: 0, socketIndex };
+  if (socketIndex === 2) return { x: cellX - 2, z: cellZ, yaw: Math.PI * 0.5, socketIndex };
+  return { x: cellX, z: cellZ - 2, yaw: 0, socketIndex:3 };
+}
+
+function getBuildSocketKey(piece, placement) {
+  if (!piece || !placement) return "";
+  if (piece.category === "door") {
+    return "door:" + (placement.snapTarget?.uuid || placement.socketKey || "");
+  }
+  if (piece.category === "deployable") {
+    return "deploy:" + roundToDeployGrid(placement.x ?? 0) + ":" + roundToDeployGrid(placement.z ?? 0) + ":" + roundToDeployGrid(placement.y || 0);
+  }
+  if (piece.category === "wall") {
+    return "wall:" + roundToBuildGrid(placement.cellX ?? placement.x) + ":" + roundToBuildGrid(placement.cellZ ?? placement.z) + ":" + placement.socketIndex;
+  }
+  const level = piece.id === "ceiling" ? "ceil" : "floor";
+  return level + ":" + roundToBuildGrid(placement.cellX ?? placement.x) + ":" + roundToBuildGrid(placement.cellZ ?? placement.z);
+}
+
+function getBuildAtSocket(socketKey) {
+  return placedBuilds.find(build => build.root.userData.socketKey === socketKey) || null;
+}
+
+function removeBuildColliders(buildRoot) {
+  const refs = buildRoot?.userData?.colliderRefs || [];
+  for (const ref of refs) removeFromArray(boxColliders, ref);
+  buildRoot.userData.colliderRefs = [];
+}
+
+function removePlacedBuild(buildRoot) {
+  if (!buildRoot) return;
+  if (currentLootBox === buildRoot) {
+    closeLootPanelState();
+  }
+  if (buildRoot.userData.isDoor) {
+    if (buildRoot.parent && buildRoot.parent.userData) {
+      buildRoot.parent.userData.hasDoor = false;
+      buildRoot.parent.userData.doorRef = null;
+    }
+  } else {
+    removeBuildColliders(buildRoot);
+    if (buildRoot.userData.hasDoor && buildRoot.userData.doorRef) {
+      removePlacedBuild(buildRoot.userData.doorRef);
+    }
+  }
+  if (buildRoot.userData.type === "lootbox") {
+    removeFromArray(interactables, buildRoot);
+    removeFromArray(lootBoxes, buildRoot);
+  }
+  if (buildRoot.parent) buildRoot.parent.remove(buildRoot);
+  else scene.remove(buildRoot);
+  const entry = placedBuilds.find(b => b.root === buildRoot);
+  if (entry) removeFromArray(placedBuilds, entry);
+  clearBuildHighlight();
+}
+
 function clearBuildHighlight() {
   if (!highlightedBuild) return;
   for (const mesh of highlightedBuild.userData.highlightMeshes || []) {
+    if (!mesh || !mesh.material) continue;
     mesh.material.emissive?.setHex(mesh.userData.baseEmissive || 0x000000);
     mesh.material.emissiveIntensity = mesh.userData.baseEmissiveIntensity ?? 0;
   }
@@ -2463,6 +3164,7 @@ function setBuildHighlight(build) {
   clearBuildHighlight();
   if (!build) return;
   for (const mesh of build.userData.highlightMeshes || []) {
+    if (!mesh || !mesh.material) continue;
     mesh.userData.baseEmissive = mesh.material.emissive ? mesh.material.emissive.getHex() : 0x000000;
     mesh.userData.baseEmissiveIntensity = mesh.material.emissiveIntensity || 0;
     if (mesh.material.emissive) {
@@ -2479,10 +3181,22 @@ function getBuildPlacement(piece) {
   const rawX = player.pos.x + offset.x;
   const rawZ = player.pos.z + offset.z;
   return {
-    x: Math.round(rawX / 4) * 4,
-    z: Math.round(rawZ / 4) * 4,
+    x: roundToBuildGrid(rawX),
+    z: roundToBuildGrid(rawZ),
     yaw: yawSnap
   };
+}
+
+function getBuildBaseY(piece, placement = null) {
+  if (!piece) return 0;
+  if (piece.id === "ceiling") {
+    return placement && typeof placement.baseY === "number" ? placement.baseY + 3 : 3;
+  }
+  if (piece.id === "floor") {
+    return placement && typeof placement.baseY === "number" ? placement.baseY : 0;
+  }
+  if (piece.id === "foundation") return 0;
+  return placement && typeof placement.baseY === "number" ? placement.baseY : 0;
 }
 
 function getNearestPlacedBuild(maxDist = 8) {
@@ -2515,45 +3229,78 @@ function getNearestPlacedBuildTo(x, z, maxDist = 8) {
   return nearest;
 }
 
-function isPlacementOccupied(x, z, minDist = 2.4, piece = null) {
-  const targetLayer = getBuildLayer(piece);
-  return placedBuilds.some(build => {
-    const buildLayer = build.layer || getBuildLayer(build.piece);
-    const sameLayer = buildLayer === targetLayer;
-    const floorConflict = (targetLayer === "floor" && buildLayer === "floor");
-    if (!sameLayer && !floorConflict) return false;
-    const dx = build.root.position.x - x;
-    const dz = build.root.position.z - z;
-    return Math.sqrt(dx*dx + dz*dz) < minDist;
-  });
+function isPlacementOccupied(placement, piece = null) {
+  const socketKey = getBuildSocketKey(piece, placement);
+  if (!socketKey) return false;
+  return !!getBuildAtSocket(socketKey);
 }
 
 function findAdjacentBuildPlacement(near, rawX, rawZ, yaw, piece) {
-  const options = [
-    { x: near.root.position.x + 4, z: near.root.position.z },
-    { x: near.root.position.x - 4, z: near.root.position.z },
-    { x: near.root.position.x, z: near.root.position.z + 4 },
-    { x: near.root.position.x, z: near.root.position.z - 4 }
-  ];
+  const nearCellX = near.root.userData.cellX ?? roundToBuildGrid(near.root.position.x);
+  const nearCellZ = near.root.userData.cellZ ?? roundToBuildGrid(near.root.position.z);
 
+  if (piece.category === "wall") {
+    const wallOptions = [0, 1, 2, 3].map(index => {
+      const option = getWallSocketPlacement(nearCellX, nearCellZ, index);
+      option.cellX = nearCellX;
+      option.cellZ = nearCellZ;
+      option.socketKey = getBuildSocketKey(piece, option);
+      option.occupiedBuild = getBuildAtSocket(option.socketKey);
+      return option;
+    });
+    wallOptions.sort((a, b) => {
+      const da = (a.x - rawX) * (a.x - rawX) + (a.z - rawZ) * (a.z - rawZ);
+      const db = (b.x - rawX) * (b.x - rawX) + (b.z - rawZ) * (b.z - rawZ);
+      return da - db;
+    });
+    return wallOptions.find(option => {
+      if (!option.occupiedBuild) return true;
+      const occupiedPiece = option.occupiedBuild.piece || getBuildPiece(option.occupiedBuild.root.userData.pieceId);
+      return occupiedPiece && occupiedPiece.category === "wall";
+    }) || null;
+  }
+
+  const options = [
+    { x: nearCellX, z: nearCellZ, y:0, yaw, cellX:nearCellX, cellZ:nearCellZ },
+    { x: nearCellX + 4, z: nearCellZ, y:0, yaw, cellX:nearCellX + 4, cellZ:nearCellZ },
+    { x: nearCellX - 4, z: nearCellZ, y:0, yaw, cellX:nearCellX - 4, cellZ:nearCellZ },
+    { x: nearCellX, z: nearCellZ + 4, y:0, yaw, cellX:nearCellX, cellZ:nearCellZ + 4 },
+    { x: nearCellX, z: nearCellZ - 4, y:0, yaw, cellX:nearCellX, cellZ:nearCellZ - 4 }
+  ];
   options.sort((a, b) => {
     const da = (a.x - rawX) * (a.x - rawX) + (a.z - rawZ) * (a.z - rawZ);
     const db = (b.x - rawX) * (b.x - rawX) + (b.z - rawZ) * (b.z - rawZ);
     return da - db;
   });
-
-  for (const option of options) {
-    if (!isPlacementOccupied(option.x, option.z, piece.category === "wall" ? 2.2 : 2.8, piece)) {
-      return { x: option.x, z: option.z, y: 0, yaw };
-    }
-  }
-
-  return null;
+  return options.find(option => !isPlacementOccupied(option, piece)) || null;
 }
 
 function computeBuildPlacement(piece) {
+  if (piece.category === "deployable") {
+    const yawSnap = Math.round(player.yaw / (Math.PI * 0.5)) * (Math.PI * 0.5);
+    const surfaceHit = getPlacementSurfaceHit(8);
+    if (!surfaceHit) return { valid:false, visible:false };
+    const root = surfaceHit.root;
+    const rootPiece = root ? getBuildPiece(root.userData.pieceId || root.userData.buildType) : null;
+    if (root && (!rootPiece || (rootPiece.category !== "structural" && rootPiece.category !== "deployable"))) {
+      return { valid:false, visible:false };
+    }
+    const y = Math.max(0, roundToDeployGrid(surfaceHit.point.y));
+    const placement = {
+      x: roundToDeployGrid(surfaceHit.point.x),
+      z: roundToDeployGrid(surfaceHit.point.z),
+      y,
+      yaw: yawSnap
+    };
+    placement.socketKey = getBuildSocketKey(piece, placement);
+    const occupied = !!getBuildAtSocket(placement.socketKey);
+    return { ...placement, valid: !occupied, visible: !occupied };
+  }
+
   if (piece.category === "door") {
-    const frame = getTargetedBuild();
+    let frame = getTargetedBuild();
+    if (frame && frame.userData.isDoor) frame = resolveBuildInteractionTarget(frame);
+    if (!frame || !frame.userData.frameType) frame = getNearestAvailableDoorFrame(piece.doorType);
     if (!frame || !frame.userData.frameType || frame.userData.frameType !== piece.doorType || frame.userData.hasDoor) {
       return { valid:false, visible:false };
     }
@@ -2574,31 +3321,38 @@ function computeBuildPlacement(piece) {
   const snapHit = getBuildSnapHit();
   if (snapHit) {
     const root = snapHit.root;
+    const cellX = root.userData.cellX ?? roundToBuildGrid(root.position.x);
+    const cellZ = root.userData.cellZ ?? roundToBuildGrid(root.position.z);
     if (piece.id === "floor" || piece.id === "ceiling" || piece.id === "foundation") {
+      const localPoint = root.worldToLocal(snapHit.point.clone());
+      let targetCellX = cellX;
+      let targetCellZ = cellZ;
+      let targetBaseY = root.userData.baseY || 0;
+      if (Math.max(Math.abs(localPoint.x), Math.abs(localPoint.z)) > 1.15) {
+        if (Math.abs(localPoint.x) > Math.abs(localPoint.z)) targetCellX += localPoint.x >= 0 ? 4 : -4;
+        else targetCellZ += localPoint.z >= 0 ? 4 : -4;
+      } else if (piece.id === "ceiling") {
+        targetBaseY += 3;
+      }
       placement = {
-        x: root.position.x,
-        z: root.position.z,
-        y: 0,
-        yaw: root.rotation.y
+        x: targetCellX,
+        z: targetCellZ,
+        y: piece.id === "ceiling" ? targetBaseY : getBuildBaseY(piece, { baseY: targetBaseY }),
+        yaw: root.rotation.y,
+        cellX: targetCellX,
+        cellZ: targetCellZ,
+        baseY: piece.id === "ceiling" ? targetBaseY : getBuildBaseY(piece, { baseY: targetBaseY })
       };
     } else {
-      const dx = snapHit.point.x - root.position.x;
-      const dz = snapHit.point.z - root.position.z;
-      if (Math.abs(dx) > Math.abs(dz)) {
-        placement = {
-          x: root.position.x + (dx >= 0 ? 4 : -4),
-          z: root.position.z,
-          y: 0,
-          yaw: Math.PI * 0.5
-        };
-      } else {
-        placement = {
-          x: root.position.x,
-          z: root.position.z + (dz >= 0 ? 4 : -4),
-          y: 0,
-          yaw: 0
-        };
-      }
+      const localPoint = root.worldToLocal(snapHit.point.clone());
+      const socketIndex = getWallSocketIndexFromLocal(localPoint);
+      placement = {
+        ...getWallSocketPlacement(cellX, cellZ, socketIndex),
+        y: 0,
+        cellX,
+        cellZ,
+        baseY: root.userData.baseY || 0
+      };
     }
   } else {
     const near = getNearestPlacedBuildTo(rawX, rawZ);
@@ -2607,11 +3361,33 @@ function computeBuildPlacement(piece) {
       if (snapped) placement = snapped;
       else return { ...placement, valid:false, visible:false };
     } else {
+      if (piece.id === "ceiling") return { ...placement, valid:false, visible:false };
       placement.y = 0;
+      placement.cellX = placement.x;
+      placement.cellZ = placement.z;
+      placement.baseY = 0;
+      if (piece.category === "wall") {
+        const forwardSocket = ((Math.round(player.yaw / (Math.PI * 0.5)) % 4) + 4) % 4;
+        placement = {
+          ...getWallSocketPlacement(placement.x, placement.z, forwardSocket),
+          y:0,
+          cellX: placement.x,
+          cellZ: placement.z,
+          baseY: 0
+        };
+      }
     }
   }
 
-  const occupied = isPlacementOccupied(placement.x, placement.z, piece.category === "wall" ? 2.2 : 2.8, piece);
+  placement.socketKey = getBuildSocketKey(piece, placement);
+  const occupiedBuild = getBuildAtSocket(placement.socketKey);
+  if (piece.category === "wall" && occupiedBuild && occupiedBuild.root && !occupiedBuild.root.userData.isDoor) {
+    const occupiedPiece = occupiedBuild.piece || getBuildPiece(occupiedBuild.root.userData.pieceId);
+    if (occupiedPiece && occupiedPiece.category === "wall") {
+      return { ...placement, valid:true, visible:true, replaceTarget: occupiedBuild.root };
+    }
+  }
+  const occupied = !!occupiedBuild;
   return { ...placement, valid: !occupied, visible: !occupied };
 }
 
@@ -2622,6 +3398,7 @@ function rebuildPreviewMesh(piece) {
     return;
   }
   const visual = createBuildVisual(piece, "twig", true);
+  visual.group.scale.set(1.14, 1.1, 1.14);
   buildPreview.add(visual.group);
   buildPreview.visible = true;
 }
@@ -2649,26 +3426,57 @@ function updateBuildMenu() {
 }
 
 function addPlacedBuildColliders(piece, placement) {
-  if (piece.id === "foundation" || piece.id === "floor") {
-    addBoxCollider(placement.x, placement.z, 2, 2);
-  } else if (piece.id === "ceiling") {
-    addBoxCollider(placement.x, placement.z, 2, 2);
+  const refs = [];
+  if (piece.id === "foundation" || piece.id === "floor" || piece.id === "ceiling") {
+    return refs;
+  } else if (piece.id === "tool_cupboard") {
+    refs.push(addBoxCollider(placement.x, placement.z, 0.55, 0.34));
+  } else if (piece.id === "storage_box") {
+    refs.push(addBoxCollider(placement.x, placement.z, 0.72, 0.48));
+  } else if (piece.id === "workbench_t1") {
+    refs.push(addBoxCollider(placement.x, placement.z, 0.84, 0.5));
   } else if (piece.id === "wall") {
-    if (Math.abs(Math.sin(placement.yaw)) > 0.5) addBoxCollider(placement.x, placement.z, 0.2, 2);
-    else addBoxCollider(placement.x, placement.z, 2, 0.2);
+    if (Math.abs(Math.sin(placement.yaw)) > 0.5) refs.push(addBoxCollider(placement.x, placement.z, 0.22, 2.08));
+    else refs.push(addBoxCollider(placement.x, placement.z, 2.08, 0.22));
   } else if (piece.id === "single_door_frame" || piece.id === "double_door_frame") {
     if (Math.abs(Math.sin(placement.yaw)) > 0.5) {
-      addBoxCollider(placement.x, placement.z - 1.75, 0.2, 0.25);
-      addBoxCollider(placement.x, placement.z + 1.75, 0.2, 0.25);
+      refs.push(addBoxCollider(placement.x, placement.z - 1.82, 0.22, 0.28));
+      refs.push(addBoxCollider(placement.x, placement.z + 1.82, 0.22, 0.28));
     } else {
-      addBoxCollider(placement.x - 1.75, placement.z, 0.25, 0.2);
-      addBoxCollider(placement.x + 1.75, placement.z, 0.25, 0.2);
+      refs.push(addBoxCollider(placement.x - 1.82, placement.z, 0.28, 0.22));
+      refs.push(addBoxCollider(placement.x + 1.82, placement.z, 0.28, 0.22));
     }
   }
+  return refs;
+}
+
+function refreshDoorColliders(doorRoot) {
+  if (!doorRoot || !doorRoot.userData.isDoor) return;
+  for (const ref of doorRoot.userData.colliderRefs || []) removeFromArray(boxColliders, ref);
+  doorRoot.userData.colliderRefs = [];
+  if (doorRoot.userData.open) return;
+
+  const frame = doorRoot.parent;
+  if (!frame) return;
+  const x = frame.position.x;
+  const z = frame.position.z;
+  const refs = [];
+  if (doorRoot.userData.frameType === "double") {
+    if (Math.abs(Math.sin(frame.rotation.y)) > 0.5) refs.push(addBoxCollider(x, z, 0.18, 1.62));
+    else refs.push(addBoxCollider(x, z, 1.62, 0.18));
+  } else {
+    if (Math.abs(Math.sin(frame.rotation.y)) > 0.5) refs.push(addBoxCollider(x, z, 0.18, 0.92));
+    else refs.push(addBoxCollider(x, z, 0.92, 0.18));
+  }
+  doorRoot.userData.colliderRefs = refs;
 }
 
 function placeBuildPiece() {
   const piece = getBuildPiece(selectedBuildPiece);
+  return placeSpecificBuildPiece(piece);
+}
+
+function placeSpecificBuildPiece(piece) {
   if (!piece || !hasRecipeCosts(piece)) return false;
 
   const placement = computeBuildPlacement(piece);
@@ -2684,20 +3492,86 @@ function placeBuildPiece() {
     doorRoot.userData.open = false;
     doorRoot.userData.targetAngle = 0;
     doorRoot.userData.frameType = piece.doorType;
-    const doorMat = new THREE.MeshStandardMaterial({ color:0x8f673b, roughness:0.9 });
-    const doorMesh = new THREE.Mesh(new THREE.BoxGeometry(piece.size.x, piece.size.y, piece.size.z), doorMat);
-    doorMesh.position.set(piece.id === "single_wood_door" ? -0.8 : 0, piece.size.y*0.5, 0);
-    doorMesh.castShadow = true;
-    doorMesh.receiveShadow = true;
-    doorRoot.add(doorMesh);
-    doorRoot.position.copy(frame.position);
-    doorRoot.rotation.y = frame.rotation.y;
-    doorRoot.userData.highlightMeshes = [doorMesh];
+    doorRoot.userData.decayTime = BUILD_DECAY_SECONDS;
+    const doorMat = new THREE.MeshStandardMaterial({ color:0xae8354, roughness:0.92 });
+    const braceMat = new THREE.MeshStandardMaterial({ color:0x785638, roughness:0.95 });
+    const metalMat = new THREE.MeshStandardMaterial({ color:0x67584c, roughness:0.72, metalness:0.15 });
+    const addSingleDoorLeaf = (parent) => {
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(1.68, piece.size.y, piece.size.z), doorMat);
+      const plankTop = new THREE.Mesh(new THREE.BoxGeometry(1.54, 0.16, 0.17), braceMat);
+      const plankMid = new THREE.Mesh(new THREE.BoxGeometry(1.54, 0.16, 0.17), braceMat);
+      const diag = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.16, 0.17), braceMat);
+      const latch = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.05), metalMat);
+      plankTop.position.set(0, 1.12, 0.02);
+      plankMid.position.set(0, -0.12, 0.02);
+      diag.position.set(0.06, 0.48, 0.02);
+      diag.rotation.z = 0.8;
+      latch.position.set(0.6, 0.02, 0.1);
+      parent.add(slab, plankTop, plankMid, diag, latch);
+      return [slab, plankTop, plankMid, diag, latch];
+    };
+    const addDoubleDoorLeaf = (parent, mirror = false) => {
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(1.56, piece.size.y, piece.size.z), doorMat);
+      const plankTop = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.16, 0.17), braceMat);
+      const plankMid = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.16, 0.17), braceMat);
+      const diag = new THREE.Mesh(new THREE.BoxGeometry(1.46, 0.16, 0.17), braceMat);
+      const latch = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.14, 0.05), metalMat);
+      plankTop.position.set(0, 1.08, 0.02);
+      plankMid.position.set(0, 0.02, 0.02);
+      diag.position.set(mirror ? -0.02 : 0.02, 0.56, 0.02);
+      diag.rotation.z = mirror ? -0.78 : 0.78;
+      latch.position.set(mirror ? -0.66 : 0.66, 0.08, 0.1);
+      parent.add(slab, plankTop, plankMid, diag, latch);
+      return [slab, plankTop, plankMid, diag, latch];
+    };
+    const highlightMeshes = [];
+    if (piece.id === "single_wood_door") {
+      const hinge = new THREE.Group();
+      hinge.position.set(-0.86, 0.15, 0);
+      const leaf = new THREE.Group();
+      leaf.position.set(0.84, piece.size.y * 0.5, 0);
+      const parts = addSingleDoorLeaf(leaf);
+      for (const part of parts) {
+        part.castShadow = true;
+        part.receiveShadow = true;
+      }
+      hinge.add(leaf);
+      doorRoot.add(hinge);
+      doorRoot.userData.hinge = hinge;
+      highlightMeshes.push(...parts);
+    } else {
+      const leftHinge = new THREE.Group();
+      const rightHinge = new THREE.Group();
+      leftHinge.position.set(-1.56, 0.15, 0);
+      rightHinge.position.set(1.56, 0.15, 0);
+      const leftLeaf = new THREE.Group();
+      const rightLeaf = new THREE.Group();
+      leftLeaf.position.set(0.78, piece.size.y * 0.5, 0);
+      rightLeaf.position.set(-0.78, piece.size.y * 0.5, 0);
+      const leftParts = addDoubleDoorLeaf(leftLeaf, false);
+      const rightParts = addDoubleDoorLeaf(rightLeaf, true);
+      for (const part of [...leftParts, ...rightParts]) {
+        part.castShadow = true;
+        part.receiveShadow = true;
+      }
+      leftHinge.add(leftLeaf);
+      rightHinge.add(rightLeaf);
+      doorRoot.add(leftHinge, rightHinge);
+      doorRoot.userData.leftHinge = leftHinge;
+      doorRoot.userData.rightHinge = rightHinge;
+      highlightMeshes.push(...leftParts, ...rightParts);
+    }
+    doorRoot.position.set(0, 0, 0);
+    doorRoot.rotation.set(0, 0, 0);
+    doorRoot.userData.highlightMeshes = highlightMeshes;
+    doorRoot.userData.socketKey = getBuildSocketKey(piece, placement);
     frame.add(doorRoot);
     frame.userData.hasDoor = true;
     frame.userData.doorRef = doorRoot;
     placedBuilds.push({ root:doorRoot, piece, tier:"twig", type:piece.id, layer:getBuildLayer(piece) });
+    refreshDoorColliders(doorRoot);
     for (const cost of piece.costs) removeItem(cost.item, cost.count);
+    refreshInventoryUI();
     return true;
   }
 
@@ -2707,34 +3581,51 @@ function placeBuildPiece() {
   build.userData.pieceId = piece.id;
   build.userData.tier = "twig";
   const visual = createBuildVisual(piece, "twig", false);
+  visual.group.scale.set(1.14, 1.1, 1.14);
   build.add(visual.group);
   let highlightMeshes = visual.highlightMeshes;
   build.userData.visualGroup = visual.group;
 
   build.position.set(placement.x, 0, placement.z);
+  build.position.y = placement.y || 0;
   build.rotation.y = placement.yaw;
+  build.userData.cellX = placement.cellX ?? placement.x;
+  build.userData.cellZ = placement.cellZ ?? placement.z;
+  build.userData.socketIndex = placement.socketIndex ?? null;
+  build.userData.socketKey = placement.socketKey || getBuildSocketKey(piece, placement);
+  build.userData.baseY = placement.y || 0;
   build.userData.highlightMeshes = highlightMeshes;
   build.userData.stability = 52;
   build.userData.maxHealth = 200;
+  build.userData.decayTime = BUILD_DECAY_SECONDS;
   if (piece.id === "single_door_frame" || piece.id === "double_door_frame") {
     build.userData.frameType = piece.doorType;
     build.userData.hasDoor = false;
   }
+  if (piece.id === "tool_cupboard" || piece.id === "storage_box") {
+    build.userData.type = "lootbox";
+    build.userData.boxKind = piece.id;
+    build.userData.inventory = createEmptyLootInventory();
+    interactables.push(build);
+    lootBoxes.push(build);
+  }
+  if (placement.replaceTarget) removePlacedBuild(placement.replaceTarget);
   scene.add(build);
   placedBuilds.push({ root:build, piece, tier:"twig", type:piece.id, layer:getBuildLayer(piece) });
 
   for (const cost of piece.costs) removeItem(cost.item, cost.count);
-  addPlacedBuildColliders(piece, placement);
+  build.userData.colliderRefs = addPlacedBuildColliders(piece, placement);
   renderCraftingRecipes();
   return true;
 }
 
 function updateBuildPreview() {
-  if (equippedTool !== "building_plan" || !selectedBuildPiece) {
-    buildPreview.visible = false;
-    return;
+  let piece = null;
+  if (equippedTool === "building_plan" && selectedBuildPiece) {
+    piece = getBuildPiece(selectedBuildPiece);
+  } else {
+    piece = getSelectedDoorPiece();
   }
-  const piece = getBuildPiece(selectedBuildPiece);
   if (!piece) {
     buildPreview.visible = false;
     return;
@@ -2752,13 +3643,33 @@ function updateBuildPreview() {
 function applyTierToBuild(buildRoot, tier) {
   const piece = getBuildPiece(buildRoot.userData.pieceId || buildRoot.userData.buildType);
   if (!piece) return;
+  const shouldRestoreHighlight = highlightedBuild === buildRoot;
+  if (shouldRestoreHighlight) clearBuildHighlight();
   if (buildRoot.userData.visualGroup) buildRoot.remove(buildRoot.userData.visualGroup);
   const visual = createBuildVisual(piece, tier, false);
+  visual.group.scale.set(1.14, 1.1, 1.14);
   buildRoot.add(visual.group);
   buildRoot.userData.visualGroup = visual.group;
   buildRoot.userData.highlightMeshes = visual.highlightMeshes;
   buildRoot.userData.tier = tier;
   buildRoot.userData.maxHealth = tier === "stone" ? 500 : tier === "wood" ? 250 : 120;
+  buildRoot.userData.decayTime = BUILD_DECAY_SECONDS;
+  if (shouldRestoreHighlight) setBuildHighlight(buildRoot);
+}
+
+function tryUpgradeBuildTier(buildRoot, tier) {
+  if (!buildRoot || buildRoot.userData.isDoor) return false;
+  const currentTier = buildRoot.userData.tier || "twig";
+  if (currentTier === tier) return false;
+  if (tier === "wood") {
+    if (totalOf("wood") < 50) return false;
+    removeItem("wood", 50);
+  } else if (tier === "stone") {
+    if (totalOf("stone") < 60) return false;
+    removeItem("stone", 60);
+  }
+  applyTierToBuild(buildRoot, tier);
+  return true;
 }
 
 function openRadialMenu(x, y, options) {
@@ -2791,7 +3702,10 @@ function openRadialMenu(x, y, options) {
     btn.textContent = option.label;
     btn.style.left = positions[index % positions.length].x + "px";
     btn.style.top = positions[index % positions.length].y + "px";
-    btn.onclick = () => {
+    btn.onmousedown = ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      suppressBuildPlacementUntil = performance.now() + 220;
       option.onClick();
       closeRadialMenu();
     };
@@ -2816,27 +3730,29 @@ function closeRadialMenu() {
 
 function openHammerMenu() {
   if (document.pointerLockElement === canvas) document.exitPointerLock();
-  const target = getTargetedBuild();
+  const target = resolveBuildInteractionTarget(getTargetedBuild());
   if (!target || target.userData.isDoor) return;
+  setBuildHighlight(target);
   openRadialMenu(innerWidth * 0.5, innerHeight * 0.5, [
     {
-      label:"Upgrade Wood",
-      meta:"Reinforce with wood",
+      label:"Twig",
+      meta:"Light starter shell",
       onClick: () => {
-        if (totalOf("wood") >= 50) {
-          removeItem("wood", 50);
-          applyTierToBuild(target, "wood");
-        }
+        applyTierToBuild(target, "twig");
       }
     },
     {
-      label:"Upgrade Stone",
+      label:"Wood",
+      meta:"Solid wood shell",
+      onClick: () => {
+        tryUpgradeBuildTier(target, "wood");
+      }
+    },
+    {
+      label:"Stone",
       meta:"Heavy stone upgrade",
       onClick: () => {
-        if (totalOf("stone") >= 60) {
-          removeItem("stone", 60);
-          applyTierToBuild(target, "stone");
-        }
+        tryUpgradeBuildTier(target, "stone");
       }
     }
   ]);
@@ -2850,21 +3766,20 @@ function openBuildPieceMenu() {
     { label:"Floor", meta:"Snap floor tile", onClick: () => { selectedBuildPiece = "floor"; rebuildPreviewMesh(getBuildPiece(selectedBuildPiece)); } },
     { label:"Ceiling", meta:"Upper floor tile", onClick: () => { selectedBuildPiece = "ceiling"; rebuildPreviewMesh(getBuildPiece(selectedBuildPiece)); } },
     { label:"Single Frame", meta:"Single door opening", onClick: () => { selectedBuildPiece = "single_door_frame"; rebuildPreviewMesh(getBuildPiece(selectedBuildPiece)); } },
-    { label:"Double Frame", meta:"Double door opening", onClick: () => { selectedBuildPiece = "double_door_frame"; rebuildPreviewMesh(getBuildPiece(selectedBuildPiece)); } },
-    { label:"Single Door", meta:"Place in single frame", onClick: () => { selectedBuildPiece = "single_wood_door"; rebuildPreviewMesh(getBuildPiece(selectedBuildPiece)); } },
-    { label:"Double Door", meta:"Place in double frame", onClick: () => { selectedBuildPiece = "double_wood_door"; rebuildPreviewMesh(getBuildPiece(selectedBuildPiece)); } }
+    { label:"Double Frame", meta:"Double door opening", onClick: () => { selectedBuildPiece = "double_door_frame"; rebuildPreviewMesh(getBuildPiece(selectedBuildPiece)); } }
   ]);
 }
 
 function toggleDoor(buildRoot) {
   if (!buildRoot || !buildRoot.userData.isDoor) return;
   buildRoot.userData.open = !buildRoot.userData.open;
-  buildRoot.userData.targetAngle = buildRoot.userData.open ? (buildRoot.userData.frameType === "double" ? Math.PI * 0.5 : Math.PI * 0.85) : 0;
+  buildRoot.userData.targetAngle = buildRoot.userData.open ? (buildRoot.userData.frameType === "double" ? Math.PI * 0.9 : Math.PI * 1.2) : 0;
+  refreshDoorColliders(buildRoot);
 }
 
 function updatePlacedBuilds(delta) {
-  const target = getTargetedBuild();
-  if (equippedTool === "hammer") setBuildHighlight(target);
+  const target = resolveBuildInteractionTarget(getTargetedBuild());
+  if (equippedTool === "hammer" && !radialMenuOpen) setBuildHighlight(target);
   else clearBuildHighlight();
 
   if (buildHint) {
@@ -2885,19 +3800,84 @@ function updatePlacedBuilds(delta) {
   for (const build of placedBuilds) {
     const root = build.root;
     if (root.userData.isDoor) {
-      root.rotation.z = THREE.MathUtils.lerp(root.rotation.z, root.userData.targetAngle || 0, delta * 6);
+      if (root.userData.hinge) {
+        root.userData.hinge.rotation.y = THREE.MathUtils.lerp(root.userData.hinge.rotation.y, root.userData.targetAngle || 0, delta * 7);
+      } else if (root.userData.leftHinge && root.userData.rightHinge) {
+        root.userData.leftHinge.rotation.y = THREE.MathUtils.lerp(root.userData.leftHinge.rotation.y, root.userData.targetAngle || 0, delta * 7);
+        root.userData.rightHinge.rotation.y = THREE.MathUtils.lerp(root.userData.rightHinge.rotation.y, -(root.userData.targetAngle || 0), delta * 7);
+      }
     }
   }
 }
 
 function updateVitals(delta) {
+  if (isDead) return;
   player.hunger = Math.max(0, player.hunger - delta * 0.45);
   player.water = Math.max(0, player.water - delta * 0.7);
 
   if (player.hunger <= 0 || player.water <= 0) {
-    player.health = Math.max(1, player.health - delta * 3.5);
+    player.health = Math.max(0, player.health - delta * 3.5);
   }
 }
+
+function showDeathScreen() {
+  if (isDead) return;
+  isDead = true;
+  deathScreen.style.display = "flex";
+  syncCurrentLootBoxFromLootSlots();
+  inventoryOpen = false;
+  lootOpen = false;
+  currentLootBox = null;
+  mapOpen = false;
+  buildMenuOpen = false;
+  radialMenuOpen = false;
+  inventoryOpenedByLoot = false;
+  bowPullActive = false;
+  bowPullAmount = 0;
+  bowReloadTimer = 0;
+  pendingMeleeHit = null;
+  swingActive = false;
+  swingTime = 0;
+  updatePanelLayout();
+  updateBuildMenu();
+  closeRadialMenu();
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+}
+
+function respawnPlayer() {
+  isDead = false;
+  deathScreen.style.display = "none";
+  player.pos.set(worldLayout.spawn.x, 3, worldLayout.spawn.z);
+  player.vel.set(0, 0, 0);
+  player.yaw = 0;
+  player.pitch = 0;
+  player.onGround = false;
+  player.health = 100;
+  player.hunger = 100;
+  player.water = 100;
+  inventoryOpen = false;
+  lootOpen = false;
+  currentLootBox = null;
+  mapOpen = false;
+  buildMenuOpen = false;
+  radialMenuOpen = false;
+  inventoryOpenedByLoot = false;
+  bowPullActive = false;
+  bowPullAmount = 0;
+  bowReloadTimer = 0;
+  pendingMeleeHit = null;
+  swingActive = false;
+  swingTime = 0;
+  rockCooldownUntil = 0;
+  updatePanelLayout();
+  updateBuildMenu();
+  updateHud();
+  updateEquippedTool();
+}
+
+respawnBtn.addEventListener("click", () => {
+  respawnPlayer();
+});
 
 function updateDayNightCycle(nowMs) {
   const cycle = (nowMs * 0.001) / DAY_NIGHT_SECONDS;
@@ -3068,8 +4048,8 @@ function placeIntoSlot(container, idx, data) {
   if (!s.item) {
     s.item = data.item;
     s.count = data.count;
-  } else if (s.item === data.item && container === "inventory" && s.count < MAX_STACK) {
-    const space = MAX_STACK - s.count;
+  } else if (s.item === data.item && container === "inventory" && s.count < getMaxStack(data.item)) {
+    const space = getMaxStack(data.item) - s.count;
     const add = Math.min(space, data.count);
     s.count += add;
     const leftover = data.count - add;
@@ -3087,8 +4067,8 @@ function placeIntoSlot(container, idx, data) {
       if (!srcSlot.item) {
         srcSlot.item = tempItem;
         srcSlot.count = tempCount;
-      } else if (dragSource.container === "inventory" && srcSlot.item === tempItem && srcSlot.count < MAX_STACK) {
-        const space = MAX_STACK - srcSlot.count;
+      } else if (dragSource.container === "inventory" && srcSlot.item === tempItem && srcSlot.count < getMaxStack(tempItem)) {
+        const space = getMaxStack(tempItem) - srcSlot.count;
         const add = Math.min(space, tempCount);
         srcSlot.count += add;
         const leftover = tempCount - add;
@@ -3123,6 +4103,7 @@ function onMouseUp(e) {
     dragSource = null;
     refreshInventoryUI();
     refreshLootUI();
+    syncCurrentLootBoxFromLootSlots();
     return;
   }
 
@@ -3142,6 +4123,7 @@ function onMouseUp(e) {
     dragSource = null;
     refreshInventoryUI();
     refreshLootUI();
+    syncCurrentLootBoxFromLootSlots();
     return;
   }
 
@@ -3153,6 +4135,7 @@ function onMouseUp(e) {
   dragSource = null;
   refreshInventoryUI();
   refreshLootUI();
+  syncCurrentLootBoxFromLootSlots();
 }
 
 document.querySelectorAll(".slot, .lootSlot").forEach(el => {
@@ -3175,16 +4158,45 @@ let equippedTool = "none";
 
 const toolGroup = new THREE.Group();
 camera.add(toolGroup);
-toolGroup.position.set(0, -0.7, -1.2);
-toolGroup.rotation.set(-0.4, 0, 0);
+toolGroup.position.set(0, -0.68, -1.05);
+toolGroup.rotation.set(-0.2, 0, 0);
 
-let axeMesh, pickaxeMesh, hammerMesh, buildingPlanMesh;
+const handsGroup = new THREE.Group();
+toolGroup.add(handsGroup);
+
+let axeMesh, pickaxeMesh, hammerMesh, buildingPlanMesh, bowMesh, arrowBundleMesh, torchMesh, heldResourceGroup;
+let heldWoodMesh, heldStoneMesh, heldClothMesh, heldScrapMesh, heldMeatMesh, heldDoorMesh, heldStorageMesh, heldCupboardMesh, heldWorkbenchMesh;
+let leftHand, rightHand;
 
 function createTools() {
   const handleMat = new THREE.MeshStandardMaterial({ color:0x8b5a2b, roughness:0.9 });
   const stoneMat  = new THREE.MeshStandardMaterial({ color:0x777777, roughness:0.9 });
   const metalMat  = new THREE.MeshStandardMaterial({ color:0x90959c, roughness:0.45, metalness:0.45 });
   const ropeMat   = new THREE.MeshStandardMaterial({ color:0xa97a43, roughness:0.8 });
+  const handMat   = new THREE.MeshStandardMaterial({ color:0xd6a07d, roughness:0.92 });
+  const sleeveMat = new THREE.MeshStandardMaterial({ color:0x4a6479, roughness:0.95 });
+
+  const leftArm = new THREE.Group();
+  const leftSleeve = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.45, 0.22), sleeveMat);
+  leftSleeve.position.set(0, -0.16, 0);
+  const leftPalm = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.18, 0.16), handMat);
+  leftPalm.position.set(0, 0.1, 0);
+  leftArm.add(leftSleeve, leftPalm);
+  leftArm.position.set(-0.26, -0.2, 0.34);
+  leftArm.rotation.set(0.4, -0.15, 0.65);
+  handsGroup.add(leftArm);
+  leftHand = leftArm;
+
+  const rightArm = new THREE.Group();
+  const rightSleeve = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.45, 0.22), sleeveMat);
+  rightSleeve.position.set(0, -0.16, 0);
+  const rightPalm = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.18, 0.16), handMat);
+  rightPalm.position.set(0, 0.1, 0);
+  rightArm.add(rightSleeve, rightPalm);
+  rightArm.position.set(0.24, -0.25, 0.12);
+  rightArm.rotation.set(0.55, 0.08, -0.4);
+  handsGroup.add(rightArm);
+  rightHand = rightArm;
 
   const axe = new THREE.Group();
   const handle = new THREE.Mesh(
@@ -3222,8 +4234,8 @@ function createTools() {
   rope.rotation.x = Math.PI/2;
   rope.position.set(0.06,0.22,0);
   axe.add(rope);
-  axe.position.set(0.32,-0.18,0.1);
-  axe.rotation.set(0.2,0.1,-0.62);
+  axe.position.set(0.08,-0.06,0.18);
+  axe.rotation.set(0.02,0.0,0.02);
 
   axeMesh = axe;
   axeMesh.visible = false;
@@ -3267,8 +4279,8 @@ function createTools() {
   pickRope.rotation.x = Math.PI/2;
   pickRope.position.set(0,0.38,0);
   pick.add(pickRope);
-  pick.position.set(0.28,-0.16,0.04);
-  pick.rotation.set(0.24,-0.08,-0.56);
+  pick.position.set(0.08,-0.05,0.16);
+  pick.rotation.set(0.02,0.0,0.02);
 
   pickaxeMesh = pick;
   pickaxeMesh.visible = false;
@@ -3295,8 +4307,8 @@ function createTools() {
   );
   claw.position.set(-0.16,0.34,0);
   hammer.add(claw);
-  hammer.position.set(0.28,-0.14,0.08);
-  hammer.rotation.set(0.34,0.05,-0.52);
+  hammer.position.set(0.08,-0.05,0.16);
+  hammer.rotation.set(0.02,0.0,0.02);
 
   hammerMesh = hammer;
   hammerMesh.visible = false;
@@ -3319,12 +4331,114 @@ function createTools() {
   page2.rotation.y = 0.03;
   page2.rotation.z = 0.03;
   plan.add(page2);
-  plan.position.set(0.22,-0.08,0.16);
-  plan.rotation.set(0.42,0.18,-0.2);
+  plan.position.set(0.0,-0.02,0.22);
+  plan.rotation.set(0.08,0.0,0.0);
 
   buildingPlanMesh = plan;
   buildingPlanMesh.visible = false;
   toolGroup.add(buildingPlanMesh);
+
+  const bow = new THREE.Group();
+  const bowCurve = new THREE.Mesh(new THREE.TorusGeometry(0.38, 0.03, 8, 28, Math.PI), handleMat);
+  bowCurve.rotation.z = Math.PI * 0.5;
+  bowCurve.rotation.y = Math.PI * 0.5;
+  bow.add(bowCurve);
+  const string = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.76, 0.01), new THREE.MeshStandardMaterial({ color:0xe9e2d2, roughness:0.7 }));
+  string.position.x = 0.02;
+  bow.add(string);
+  const nockedArrow = new THREE.Group();
+  const nockedShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.72, 5), handleMat);
+  nockedShaft.rotation.z = Math.PI * 0.5;
+  nockedArrow.add(nockedShaft);
+  const nockedHead = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.07, 4), stoneMat);
+  nockedHead.rotation.z = -Math.PI * 0.5;
+  nockedHead.position.x = 0.36;
+  nockedArrow.add(nockedHead);
+  const nockedFletch = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, 0.018), new THREE.MeshStandardMaterial({ color:0xf4f6fb, roughness:0.8 }));
+  nockedFletch.position.x = -0.28;
+  nockedArrow.add(nockedFletch);
+  nockedArrow.position.set(0.04, 0, 0);
+  nockedArrow.visible = false;
+  bow.add(nockedArrow);
+  bow.userData.stringMesh = string;
+  bow.userData.nockedArrow = nockedArrow;
+  bow.position.set(-0.02, -0.02, 0.32);
+  bow.rotation.set(-0.02, 0.12, 0.14);
+  bowMesh = bow;
+  bowMesh.visible = false;
+  toolGroup.add(bowMesh);
+
+  const arrowBundle = new THREE.Group();
+  for (let i=0; i<3; i++) {
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.75, 5), handleMat);
+    shaft.rotation.z = Math.PI * 0.5;
+    shaft.position.set(0, i * 0.04, 0);
+    arrowBundle.add(shaft);
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.08, 4), stoneMat);
+    head.rotation.z = -Math.PI * 0.5;
+    head.position.set(0.38, i * 0.04, 0);
+    arrowBundle.add(head);
+  }
+  arrowBundle.position.set(0.12, -0.08, 0.12);
+  arrowBundle.rotation.set(0.0, 0.0, 0.0);
+  arrowBundleMesh = arrowBundle;
+  arrowBundleMesh.visible = false;
+  toolGroup.add(arrowBundleMesh);
+
+  const torch = new THREE.Group();
+  const torchHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.72, 6), handleMat);
+  torchHandle.rotation.z = Math.PI * 0.18;
+  torchHandle.position.set(0.06, -0.02, 0.14);
+  torch.add(torchHandle);
+  const torchHead = new THREE.Mesh(
+    new THREE.SphereGeometry(0.09, 8, 8),
+    new THREE.MeshStandardMaterial({ color:0xffa347, emissive:0xff7b1f, emissiveIntensity:1.8, roughness:0.45 })
+  );
+  torchHead.position.set(0.16, 0.22, 0.14);
+  torch.add(torchHead);
+  const torchLight = new THREE.PointLight(0xffb25e, 1.8, 11, 2);
+  torchLight.position.copy(torchHead.position);
+  torch.add(torchLight);
+  torch.position.set(0.18, -0.12, 0.18);
+  torch.rotation.set(0.2, -0.4, 0.1);
+  torchMesh = torch;
+  torchMesh.visible = false;
+  toolGroup.add(torchMesh);
+
+  heldResourceGroup = new THREE.Group();
+  heldResourceGroup.position.set(0.02, -0.02, 0.2);
+  heldResourceGroup.rotation.set(0.0, 0.0, 0.0);
+  heldResourceGroup.visible = false;
+  toolGroup.add(heldResourceGroup);
+
+  heldWoodMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.7, 6), handleMat);
+  heldWoodMesh.rotation.x = Math.PI * 0.5;
+  heldResourceGroup.add(heldWoodMesh);
+
+  heldStoneMesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.18), stoneMat);
+  heldResourceGroup.add(heldStoneMesh);
+
+  heldClothMesh = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.16, 0.26), new THREE.MeshStandardMaterial({ color:0x7ba766, roughness:0.95 }));
+  heldResourceGroup.add(heldClothMesh);
+
+  heldScrapMesh = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.12), new THREE.MeshStandardMaterial({ color:0x8a8d91, roughness:0.7, metalness:0.5 }));
+  heldResourceGroup.add(heldScrapMesh);
+
+  heldMeatMesh = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), new THREE.MeshStandardMaterial({ color:0xa3473d, roughness:0.9 }));
+  heldMeatMesh.scale.set(1.2, 0.8, 0.8);
+  heldResourceGroup.add(heldMeatMesh);
+
+  heldDoorMesh = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.5, 0.05), new THREE.MeshStandardMaterial({ color:0x855d3d, roughness:0.88 }));
+  heldResourceGroup.add(heldDoorMesh);
+
+  heldStorageMesh = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.22, 0.26), new THREE.MeshStandardMaterial({ color:0x7a5535, roughness:0.9 }));
+  heldResourceGroup.add(heldStorageMesh);
+
+  heldCupboardMesh = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.42, 0.18), new THREE.MeshStandardMaterial({ color:0x725238, roughness:0.88 }));
+  heldResourceGroup.add(heldCupboardMesh);
+
+  heldWorkbenchMesh = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.42, 0.18), new THREE.MeshStandardMaterial({ color:0x5e422b, roughness:0.9 }));
+  heldResourceGroup.add(heldWorkbenchMesh);
 }
 
 createTools();
@@ -3333,11 +4447,21 @@ function updateEquippedTool() {
   const s = slots[selectedHotbar];
   const previousTool = equippedTool;
   let newTool = "none";
+  if (s && s.item === "rock") newTool = "rock";
   if (s && s.item === "axe") newTool = "axe";
   if (s && s.item === "pickaxe") newTool = "pickaxe";
+  if (s && s.item === "bow") newTool = "bow";
+  if (s && s.item === "arrow") newTool = "arrow";
   if (s && s.item === "hammer") newTool = "hammer";
   if (s && s.item === "building_plan") newTool = "building_plan";
+  if (s && s.item === "torch") newTool = "torch";
   equippedTool = newTool;
+  if (previousTool !== equippedTool) {
+    bowPullActive = false;
+    bowPullAmount = 0;
+    bowReloadTimer = 0;
+    pendingMeleeHit = null;
+  }
   if ((equippedTool === "hammer" || equippedTool === "building_plan") && !selectedBuildPiece) {
     selectedBuildPiece = "wall";
     rebuildPreviewMesh(getBuildPiece(selectedBuildPiece));
@@ -3347,108 +4471,109 @@ function updateEquippedTool() {
   }
   if (axeMesh) axeMesh.visible = (equippedTool === "axe");
   if (pickaxeMesh) pickaxeMesh.visible = (equippedTool === "pickaxe");
+  if (bowMesh) bowMesh.visible = (equippedTool === "bow");
+  if (arrowBundleMesh) arrowBundleMesh.visible = (equippedTool === "arrow");
   if (hammerMesh) hammerMesh.visible = (equippedTool === "hammer");
   if (buildingPlanMesh) buildingPlanMesh.visible = (equippedTool === "building_plan");
+  if (torchMesh) torchMesh.visible = (equippedTool === "torch");
+  if (handsGroup) handsGroup.visible = !!(s && s.item);
+  if (heldResourceGroup) {
+    heldResourceGroup.visible = false;
+    if (heldWoodMesh) heldWoodMesh.visible = s && s.item === "wood";
+    if (heldStoneMesh) heldStoneMesh.visible = s && (s.item === "stone" || s.item === "rock");
+    if (heldClothMesh) heldClothMesh.visible = s && s.item === "cloth";
+    if (heldScrapMesh) heldScrapMesh.visible = s && s.item === "scrap";
+    if (heldMeatMesh) heldMeatMesh.visible = s && s.item === "meat";
+    if (heldDoorMesh) heldDoorMesh.visible = s && (s.item === "single_wood_door" || s.item === "double_wood_door");
+    if (heldStorageMesh) heldStorageMesh.visible = s && s.item === "storage_box";
+    if (heldCupboardMesh) heldCupboardMesh.visible = s && s.item === "tool_cupboard";
+    if (heldWorkbenchMesh) heldWorkbenchMesh.visible = s && s.item === "workbench_t1";
+    const showingTool = equippedTool !== "none" && equippedTool !== "rock";
+    if (!showingTool && s && s.item) heldResourceGroup.visible = true;
+  }
 }
 
 /* swing + sway */
 let swingTime = 0;
 let swingActive = false;
+let bowPullActive = false;
+let bowPullAmount = 0;
+let bowReloadTimer = 0;
+const BOW_RELOAD_SECONDS = 0.55;
+const ROCK_SWING_SECONDS = 0.72;
+const ROCK_HIT_DELAY_SECONDS = 0.42;
+let rockCooldownUntil = 0;
+let pendingMeleeHit = null;
 
 function startSwing() {
-  if (equippedTool === "none") return;
-  if (swingActive) return;
+  if (!isMeleeTool(equippedTool)) return false;
+  if (swingActive) return false;
+  const now = performance.now();
+  if (equippedTool === "rock" && now < rockCooldownUntil) return false;
   swingActive = true;
   swingTime = 0;
+  if (equippedTool === "rock") rockCooldownUntil = now + ROCK_SWING_SECONDS * 1000;
+  return true;
 }
 
-function updateToolAnimation(delta, moveAmount) {
-  const swayStrength = 0.08;
-  const swaySpeed = 6;
-  const t = performance.now() * 0.001;
-  const sway = Math.sin(t * swaySpeed) * swayStrength * Math.min(moveAmount*5,1);
-
-  toolGroup.rotation.z = sway;
-  toolGroup.rotation.x = -0.4;
-
-  if (swingActive) {
-    swingTime += delta * 5;
-    const p = Math.min(swingTime, 1);
-    const angle = Math.sin(p * Math.PI) * 0.8;
-    toolGroup.rotation.x = -0.4 + angle;
-    if (p >= 1) {
-      swingActive = false;
-      toolGroup.rotation.x = -0.4;
-    }
-  }
+function isMeleeTool(tool) {
+  return tool === "rock" || tool === "axe" || tool === "pickaxe" || tool === "hammer";
 }
 
-/* ---------------------------------------------------------
-   RAYCAST HIT + LOOT OPEN
---------------------------------------------------------- */
-const ray = new THREE.Raycaster();
-let currentLootBox = null;
+function getSwingDuration(tool) {
+  return tool === "rock" ? ROCK_SWING_SECONDS : 0.2;
+}
 
-window.addEventListener("click", () => {
-  if (inventoryOpen || lootOpen) return;
-
-  if (equippedTool === "building_plan" && selectedBuildPiece) {
-    placeBuildPiece();
-    return;
-  }
-
-  if (document.pointerLockElement !== canvas) return;
-
-  startSwing();
-
-  ray.setFromCamera({x:0,y:0}, camera);
-  const hits = ray.intersectObjects(interactables, true);
-  if (!hits.length) return;
-
-  const hit = hits[0];
-  if (hit.distance > 6) return;
-
-  let obj = hit.object;
-  while (obj.parent && obj.parent !== scene) obj = obj.parent;
+function applyMeleeDamage(obj, hitPoint, attackTool = equippedTool) {
+  if (!obj || !obj.userData || typeof obj.userData.hp !== "number" || !obj.parent) return;
 
   const data = obj.userData;
-
   if (data.type === "lootbox") return;
 
   let damage = 1;
+  const impactPoint = hitPoint ? hitPoint.clone() : obj.position.clone();
+
+  if (data.type === "tree" && attackTool !== "rock" && attackTool !== "axe") {
+    spawnParticles(impactPoint, "wood", 4);
+    return;
+  }
+  if (data.type === "rock" && attackTool !== "rock" && attackTool !== "pickaxe") {
+    spawnParticles(impactPoint, "stone", 4);
+    return;
+  }
 
   if (data.type === "tree") {
     const redX = data.redX;
     if (redX && redX.mesh) {
       const xWorld = new THREE.Vector3();
       redX.mesh.getWorldPosition(xWorld);
-      if (xWorld.distanceTo(hit.point) < 1.0) {
+      if (xWorld.distanceTo(impactPoint) < 1.0) {
         damage = 3;
-        spawnParticles(hit.point, "wood", 14);
+        spawnParticles(impactPoint, "wood", 14);
         moveTreeRedXSlightly(obj);
       } else {
-        spawnParticles(hit.point, "wood", 8);
+        spawnParticles(impactPoint, "wood", 8);
       }
     } else {
-      spawnParticles(hit.point, "wood", 8);
+      spawnParticles(impactPoint, "wood", 8);
     }
   } else if (data.type === "rock") {
     const shineData = data.shine;
     if (shineData && shineData.mesh) {
       const shineWorld = new THREE.Vector3();
       shineData.mesh.getWorldPosition(shineWorld);
-      if (shineWorld.distanceTo(hit.point) < 1.0) {
+      if (shineWorld.distanceTo(impactPoint) < 1.0) {
         damage = 3;
-        spawnParticles(hit.point, "stone", 14);
+        spawnParticles(impactPoint, "stone", 14);
         moveRockShineSlightly(obj);
       } else {
-        spawnParticles(hit.point, "stone", 8);
+        spawnParticles(impactPoint, "stone", 8);
       }
     } else {
-      spawnParticles(hit.point, "stone", 8);
+      spawnParticles(impactPoint, "stone", 8);
     }
   } else if (data.type === "animal") {
-    spawnParticles(hit.point, "meat", 10);
+    spawnParticles(impactPoint, "meat", 10);
     if (data.species === "boar" || data.species === "bear") {
       data.aggro = true;
       data.state = "chase";
@@ -3467,13 +4592,13 @@ window.addEventListener("click", () => {
 
   if (data.hp <= 0){
     if (data.type==="tree") {
-      if (equippedTool === "axe") addItem("wood",4);
-      else addItem("wood",2);
+      if (attackTool === "axe") addItem("wood",800);
+      else addItem("wood",300);
       startTreeFall(obj);
     }
     if (data.type==="rock") {
-      if (equippedTool === "pickaxe") addItem("stone",4);
-      else addItem("stone",2);
+      if (attackTool === "pickaxe") addItem("stone",800);
+      else addItem("stone",300);
       startNodeBreak(obj);
     }
     if (data.type==="animal") {
@@ -3483,6 +4608,326 @@ window.addEventListener("click", () => {
       removeFromArray(animals, obj);
     }
   }
+}
+
+function updatePendingMeleeHit() {
+  if (!pendingMeleeHit) return;
+  if (performance.now() < pendingMeleeHit.executeAt) return;
+  const pending = pendingMeleeHit;
+  pendingMeleeHit = null;
+  applyMeleeDamage(pending.obj, pending.hitPoint, pending.tool);
+}
+
+function updateToolAnimation(delta, moveAmount) {
+  const swayStrength = 0.08;
+  const swaySpeed = 6;
+  const t = performance.now() * 0.001;
+  const sway = Math.sin(t * swaySpeed) * swayStrength * Math.min(moveAmount*5,1);
+
+  toolGroup.rotation.z = sway * 0.18;
+  toolGroup.rotation.x = -0.12;
+  if (heldResourceGroup) {
+    heldResourceGroup.position.set(0.02, -0.02, 0.2);
+    heldResourceGroup.rotation.set(0.0, 0.0, 0.0);
+  }
+
+  if (swingActive && equippedTool !== "bow") {
+    swingTime += delta;
+    const p = Math.min(swingTime / getSwingDuration(equippedTool), 1);
+    if (equippedTool === "rock") {
+      const windup = Math.min(p / 0.38, 1);
+      const strike = Math.min(Math.max((p - 0.38) / 0.26, 0), 1);
+      const recover = Math.min(Math.max((p - 0.64) / 0.36, 0), 1);
+      const windupEase = Math.sin(windup * Math.PI * 0.5);
+      const strikeEase = Math.sin(strike * Math.PI * 0.5);
+      const recoverEase = Math.sin(recover * Math.PI * 0.5);
+      toolGroup.rotation.x = -0.12 - windupEase * 0.7 + strikeEase * 0.48 - recoverEase * 0.22;
+      toolGroup.rotation.z = sway * 0.18 + 0.16 - windupEase * 0.08 - strikeEase * 0.46 + recoverEase * 0.12;
+      if (heldResourceGroup) {
+        heldResourceGroup.position.set(
+          0.24 - windupEase * 0.06 - strikeEase * 0.18 + recoverEase * 0.08,
+          -0.14 - windupEase * 0.18 + strikeEase * 0.11 + recoverEase * 0.02,
+          0.3 + windupEase * 0.1 - strikeEase * 0.26 + recoverEase * 0.12
+        );
+        heldResourceGroup.rotation.set(
+          0.95 + windupEase * 0.7 - strikeEase * 1.15 + recoverEase * 0.22,
+          0.34 - strikeEase * 0.16,
+          0.64 - strikeEase * 0.78 + recoverEase * 0.18
+        );
+      }
+    } else {
+      const angle = Math.sin(p * Math.PI) * 0.8;
+      toolGroup.rotation.x = -0.12 + angle;
+    }
+    if (p >= 1) {
+      swingActive = false;
+      toolGroup.rotation.x = -0.12;
+      toolGroup.rotation.z = sway * 0.18;
+    }
+  }
+
+  bowReloadTimer = Math.max(0, bowReloadTimer - delta);
+
+  if (leftHand && rightHand) {
+    leftHand.position.set(-0.12, -0.1, 0.22);
+    leftHand.rotation.set(0.14, 0.0, 0.06);
+    rightHand.position.set(0.12, -0.12, 0.16);
+    rightHand.rotation.set(0.16, 0.0, -0.04);
+
+    if (equippedTool === "bow") {
+      const reloadAnim = bowReloadTimer > 0 ? 1 - (bowReloadTimer / BOW_RELOAD_SECONDS) : 0;
+      const drawEase = Math.sin(bowPullAmount * Math.PI * 0.5);
+      leftHand.position.set(-0.16, -0.06, 0.34);
+      leftHand.rotation.set(0.02 - drawEase * 0.03, 0.08, 0.18);
+      rightHand.position.set(0.08, -0.11 + reloadAnim * 0.04, 0.2 - drawEase * 0.24 + reloadAnim * 0.08);
+      rightHand.rotation.set(0.24 + drawEase * 0.16 + reloadAnim * 0.08, -0.04, -0.1);
+      if (bowMesh) {
+        bowMesh.position.set(-0.02, -0.04 + reloadAnim * 0.03, 0.34 - drawEase * 0.05);
+        bowMesh.rotation.set(-0.04 + reloadAnim * 0.06, 0.18, 0.18 - drawEase * 0.05);
+        const string = bowMesh.userData.stringMesh || bowMesh.children[1];
+        if (string) {
+          string.scale.y = 1;
+          string.position.z = -drawEase * 0.24;
+        }
+        const nockedArrow = bowMesh.userData.nockedArrow;
+        if (nockedArrow) {
+          nockedArrow.visible = bowReloadTimer <= 0 || drawEase > 0.05;
+          nockedArrow.position.set(0.04, 0, -drawEase * 0.2);
+          nockedArrow.rotation.set(0, 0, 0);
+        }
+      }
+      if (arrowBundleMesh) {
+        arrowBundleMesh.position.set(0.24, -0.18 + reloadAnim * 0.04, 0.16);
+        arrowBundleMesh.rotation.set(0.1, 0.12, 0.22);
+      }
+    } else if (equippedTool === "building_plan") {
+      leftHand.position.set(-0.1, -0.08, 0.18);
+      leftHand.rotation.set(0.14, 0.0, 0.04);
+      rightHand.position.set(0.08, -0.08, 0.22);
+      rightHand.rotation.set(0.12, 0.0, -0.02);
+    } else if (equippedTool === "hammer") {
+      leftHand.position.set(-0.08, -0.12, 0.16);
+      leftHand.rotation.set(0.18, 0.0, 0.02);
+    } else if (equippedTool === "rock") {
+      leftHand.position.set(-0.1, -0.14, 0.16);
+      leftHand.rotation.set(0.24, 0.0, 0.12);
+      rightHand.position.set(0.12, -0.16, 0.14);
+      rightHand.rotation.set(0.3, 0.0, -0.12);
+    } else if (equippedTool === "arrow") {
+      leftHand.position.set(-0.08, -0.1, 0.16);
+      leftHand.rotation.set(0.16, 0.0, 0.02);
+      rightHand.position.set(0.08, -0.12, 0.16);
+      rightHand.rotation.set(0.16, 0.0, -0.02);
+    }
+
+    if (swingActive && equippedTool === "rock") {
+      const p = Math.min(swingTime / ROCK_SWING_SECONDS, 1);
+      const windup = Math.min(p / 0.38, 1);
+      const strike = Math.min(Math.max((p - 0.38) / 0.26, 0), 1);
+      const recover = Math.min(Math.max((p - 0.64) / 0.36, 0), 1);
+      const windupEase = Math.sin(windup * Math.PI * 0.5);
+      const strikeEase = Math.sin(strike * Math.PI * 0.5);
+      const recoverEase = Math.sin(recover * Math.PI * 0.5);
+      leftHand.position.set(-0.08 - strikeEase * 0.04, -0.14 - windupEase * 0.06 + strikeEase * 0.04, 0.18 + strikeEase * 0.09);
+      leftHand.rotation.set(0.26 + windupEase * 0.38 - strikeEase * 0.22 + recoverEase * 0.08, 0.0, 0.14 + strikeEase * 0.04);
+      rightHand.position.set(0.18 - strikeEase * 0.08, -0.18 - windupEase * 0.1 + strikeEase * 0.06, 0.18 + strikeEase * 0.12);
+      rightHand.rotation.set(0.42 + windupEase * 0.54 - strikeEase * 0.64 + recoverEase * 0.14, 0.0, -0.16 - strikeEase * 0.08 + recoverEase * 0.03);
+    }
+  }
+
+  if (equippedTool !== "bow" && bowMesh) {
+    bowMesh.position.set(-0.02, -0.02, 0.32);
+    bowMesh.rotation.set(-0.02, 0.12, 0.14);
+    const string = bowMesh.userData.stringMesh || bowMesh.children[1];
+    if (string) {
+      string.position.z = 0;
+    }
+    const nockedArrow = bowMesh.userData.nockedArrow;
+    if (nockedArrow) nockedArrow.visible = false;
+  }
+
+  if (equippedTool === "bow") bowPullAmount = Math.max(0, Math.min(1, bowPullAmount + (bowPullActive ? delta * 2.4 : -delta * 5)));
+  else bowPullAmount = 0;
+}
+
+/* ---------------------------------------------------------
+   RAYCAST HIT + LOOT OPEN
+--------------------------------------------------------- */
+const ray = new THREE.Raycaster();
+let currentLootBox = null;
+
+function shootBow(power = 1) {
+  if (totalOf("arrow") <= 0 || bowReloadTimer > 0) return false;
+  removeItem("arrow", 1);
+  bowReloadTimer = BOW_RELOAD_SECONDS;
+
+  const shaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.012, 0.012, 0.9, 5),
+    new THREE.MeshStandardMaterial({ color:0x8f6b42, roughness:0.92 })
+  );
+  shaft.rotation.z = Math.PI * 0.5;
+  const arrow = new THREE.Group();
+  arrow.add(shaft);
+  const head = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.08, 4), new THREE.MeshStandardMaterial({ color:0x888888, roughness:0.8 }));
+  head.rotation.z = -Math.PI * 0.5;
+  head.position.x = 0.45;
+  arrow.add(head);
+  const fletch = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.02), new THREE.MeshStandardMaterial({ color:0xd7f0ff, roughness:0.8 }));
+  fletch.position.x = -0.35;
+  arrow.add(fletch);
+
+  const dir = new THREE.Vector3(
+    Math.cos(player.pitch)*Math.sin(player.yaw),
+    Math.sin(player.pitch),
+    Math.cos(player.pitch)*Math.cos(player.yaw)
+  ).normalize();
+  arrow.position.copy(player.pos).add(new THREE.Vector3(0, 0.7, 0)).addScaledVector(dir, 1.4);
+  arrow.lookAt(arrow.position.clone().add(dir));
+  scene.add(arrow);
+  const trailPoints = [arrow.position.clone(), arrow.position.clone().sub(dir.clone().multiplyScalar(2.8))];
+  const trailGeo = new THREE.BufferGeometry().setFromPoints(trailPoints);
+  const trail = new THREE.Line(
+    trailGeo,
+    new THREE.LineBasicMaterial({ color:0xffffff, transparent:true, opacity:1.0 })
+  );
+  scene.add(trail);
+  flyingArrows.push({
+    mesh:arrow,
+    vel:dir.multiplyScalar(18 + power * 22),
+    life:3.4,
+    damage:2 + Math.round(power * 4),
+    trail,
+    trailHistory:[arrow.position.clone(), arrow.position.clone().sub(dir.clone().multiplyScalar(0.9))]
+  });
+
+  return true;
+}
+
+function updateFlyingArrows(delta) {
+  for (let i=flyingArrows.length-1; i>=0; i--) {
+    const arrow = flyingArrows[i];
+    arrow.life -= delta;
+    const prevPos = arrow.mesh.position.clone();
+    arrow.mesh.position.addScaledVector(arrow.vel, delta);
+    arrow.vel.y -= 8 * delta;
+    arrow.mesh.lookAt(arrow.mesh.position.clone().add(arrow.vel));
+    if (arrow.trail) {
+      arrow.trailHistory.unshift(arrow.mesh.position.clone());
+      while (arrow.trailHistory.length > 10) arrow.trailHistory.pop();
+      arrow.trail.geometry.setFromPoints(arrow.trailHistory);
+      arrow.trail.material.opacity = Math.max(0.35, Math.min(1, arrow.life * 0.45));
+    }
+
+    let hitSomething = false;
+    for (const animal of animals) {
+      const dist = animal.position.distanceTo(arrow.mesh.position);
+      if (dist > 1.4) continue;
+      const data = animal.userData;
+      data.hp -= arrow.damage;
+      spawnParticles(arrow.mesh.position.clone(), "meat", 9);
+      if (data.species === "boar" || data.species === "bear") {
+        data.aggro = true;
+        data.state = "chase";
+        data.target.copy(player.pos);
+      } else if (data.species === "deer") {
+        data.state = "flee";
+        data.target.set(
+          animal.position.x - Math.sin(player.yaw) * 12,
+          0,
+          animal.position.z - Math.cos(player.yaw) * 12
+        );
+      }
+      if (data.hp <= 0) {
+        addItem("meat", data.species === "bear" ? 3 : 1);
+        scene.remove(animal);
+        removeFromArray(interactables, animal);
+        removeFromArray(animals, animal);
+      }
+      hitSomething = true;
+      break;
+    }
+
+    if (arrow.life <= 0) {
+      scene.remove(arrow.mesh);
+      if (arrow.trail) scene.remove(arrow.trail);
+      flyingArrows.splice(i, 1);
+    } else if (hitSomething) {
+      scene.remove(arrow.mesh);
+      if (arrow.trail) scene.remove(arrow.trail);
+      flyingArrows.splice(i, 1);
+    }
+  }
+}
+
+window.addEventListener("click", () => {
+  if (isDead) return;
+  if (inventoryOpen || lootOpen) return;
+  if (radialMenuOpen || performance.now() < suppressBuildPlacementUntil) return;
+
+  if (equippedTool === "building_plan" && selectedBuildPiece) {
+    placeBuildPiece();
+    return;
+  }
+  const craftedDoorPiece = getSelectedDoorPiece();
+  if (craftedDoorPiece) {
+    placeSpecificBuildPiece(craftedDoorPiece);
+    return;
+  }
+
+  if (document.pointerLockElement !== canvas) return;
+
+  if (equippedTool === "bow") return;
+  if (!isMeleeTool(equippedTool)) return;
+
+  ray.setFromCamera({x:0,y:0}, camera);
+  const hits = ray.intersectObjects(interactables, true);
+  const startedSwing = startSwing();
+  if (!startedSwing) return;
+  if (!hits.length) return;
+
+  const hit = hits[0];
+  if (hit.distance > 6) return;
+
+  let obj = hit.object;
+  while (obj.parent && obj.parent !== scene) obj = obj.parent;
+
+  const data = obj.userData;
+  if (data.type === "lootbox") return;
+  if (equippedTool === "rock") {
+    pendingMeleeHit = {
+      executeAt: performance.now() + ROCK_HIT_DELAY_SECONDS * 1000,
+      obj,
+      hitPoint: hit.point.clone(),
+      tool: equippedTool
+    };
+    return;
+  }
+  applyMeleeDamage(obj, hit.point, equippedTool);
+});
+
+window.addEventListener("mousedown", e => {
+  if (isDead) return;
+  if (equippedTool === "bow") {
+    if (e.button === 2) {
+      bowPullActive = !inventoryOpen && !lootOpen && !mapOpen && !radialMenuOpen && document.pointerLockElement === canvas && bowReloadTimer <= 0 && totalOf("arrow") > 0;
+      return;
+    }
+    if (e.button === 0 && bowPullActive && !inventoryOpen && !lootOpen && document.pointerLockElement === canvas && bowPullAmount > 0.12) {
+      shootBow(bowPullAmount);
+      bowPullActive = false;
+      bowPullAmount = 0;
+      return;
+    }
+  }
+  if (e.button !== 0) return;
+  if (inventoryOpen || lootOpen || mapOpen || radialMenuOpen) return;
+});
+
+window.addEventListener("mouseup", e => {
+  if (isDead) return;
+  if (equippedTool === "bow" && e.button === 2) {
+    bowPullActive = false;
+  }
 });
 
 function openLootBox(box) {
@@ -3490,18 +4935,21 @@ function openLootBox(box) {
   box.getWorldPosition(boxPos);
   if (distanceToPlayer(boxPos) > 4.5) return;
 
-  const data = box.userData;
-  if (data.opened) return;
-  data.opened = true;
+  if (currentLootBox && currentLootBox !== box) {
+    syncCurrentLootBoxFromLootSlots();
+  }
 
-  for (let i=0;i<LOOT_SLOT_COUNT;i++) {
-    lootSlots[i].item = null;
-    lootSlots[i].count = 0;
+  const data = box.userData;
+  if (!data.inventory) {
+    const seeded = createEmptyLootInventory();
+    for (let i=0; i<Math.min(LOOT_SLOT_COUNT, data.loot?.length || 0); i++) {
+      seeded[i].item = data.loot[i].item;
+      seeded[i].count = data.loot[i].count;
+    }
+    data.inventory = seeded;
   }
-  for (let i=0;i<data.loot.length && i<LOOT_SLOT_COUNT;i++) {
-    lootSlots[i].item = data.loot[i].item;
-    lootSlots[i].count = data.loot[i].count;
-  }
+  loadLootSlotsFromBox(box);
+  lootTitle.textContent = getLootBoxDisplayName(box);
   refreshLootUI();
 
   inventoryOpenedByLoot = !inventoryOpen;
@@ -3538,10 +4986,18 @@ function updateAnimals(delta){
     const d = a.userData;
     const toPlayer = new THREE.Vector3().subVectors(player.pos, a.position);
     const playerDist = toPlayer.length();
+    const leashRange = d.species === "bear" ? 34 : d.species === "boar" ? 26 : 0;
     d.attackCooldown = Math.max(0, d.attackCooldown - delta);
 
     if ((d.species === "boar" || d.species === "bear") && playerDist < d.aggroRange) {
       d.aggro = true;
+    }
+
+    if (d.aggro && leashRange > 0 && playerDist > leashRange) {
+      d.aggro = false;
+      d.state = "idle";
+      d.wait = 1 + Math.random() * 2;
+      d.target.copy(a.position);
     }
 
     if (d.passiveFlee && playerDist < 7) {
@@ -3595,6 +5051,7 @@ function updateAnimals(delta){
         player.health = Math.max(0, player.health - d.damage);
         spawnParticles(player.pos.clone().add(new THREE.Vector3(0, 0.8, 0)), "meat", 8);
         d.attackCooldown = d.species === "bear" ? 1.0 : 0.85;
+        if (player.health <= 0) showDeathScreen();
       }
     }
   }
@@ -3667,7 +5124,36 @@ function resolvePlayerCollisions(pos) {
   }
 }
 
+function resolveCeilingCollision() {
+  if (player.vel.y <= 0) return;
+  for (const build of placedBuilds) {
+    const root = build.root;
+    const piece = build.piece || getBuildPiece(root.userData.pieceId || root.userData.buildType);
+    if (!piece || piece.id !== "ceiling") continue;
+    const half = 2.3;
+    if (Math.abs(player.pos.x - root.position.x) > half + player.radius) continue;
+    if (Math.abs(player.pos.z - root.position.z) > half + player.radius) continue;
+    const ceilingBottom = root.position.y - 0.02;
+    if (player.pos.y >= ceilingBottom - 0.45 && player.pos.y <= ceilingBottom + 0.6) {
+      player.pos.y = ceilingBottom - 0.28;
+      player.vel.y = 0;
+      return;
+    }
+  }
+}
+
 function updatePlayer(delta){
+  if (isDead) {
+    player.vel.set(0, 0, 0);
+    camera.position.copy(player.pos);
+    const deadDir = new THREE.Vector3(
+      Math.cos(player.pitch)*Math.sin(player.yaw),
+      Math.sin(player.pitch),
+      Math.cos(player.pitch)*Math.cos(player.yaw)
+    );
+    camera.lookAt(player.pos.clone().add(deadDir));
+    return 0;
+  }
   const sens = 0.0022;
   const appliedLookX = THREE.MathUtils.clamp(pendingLookX, -36, 36);
   const appliedLookY = THREE.MathUtils.clamp(pendingLookY, -28, 28);
@@ -3703,6 +5189,7 @@ function updatePlayer(delta){
 
   player.vel.y += GRAVITY;
   player.pos.y += player.vel.y;
+  resolveCeilingCollision();
 
   if (player.pos.y < 2){
     player.pos.y = 2;
@@ -3722,9 +5209,12 @@ function updatePlayer(delta){
     Math.sin(player.pitch),
     Math.cos(player.pitch)*Math.cos(player.yaw)
   );
-
-  camera.position.copy(player.pos);
-  camera.lookAt(player.pos.clone().add(dir));
+  const bobStrength = player.onGround ? Math.min(moveAmount / player.speed, 1) : 0;
+  const bobTime = performance.now() * 0.01;
+  const bobY = Math.sin(bobTime) * 0.055 * bobStrength;
+  const bobX = Math.cos(bobTime * 0.5) * 0.022 * bobStrength;
+  camera.position.set(player.pos.x + bobX, player.pos.y + bobY, player.pos.z);
+  camera.lookAt(camera.position.clone().add(dir));
 
   return moveAmount;
 }
@@ -3737,6 +5227,8 @@ setInventoryTab("inventory");
 renderCraftingRecipes();
 updateCraftQueueUI();
 updateBuildMenu();
+addItem("rock", 1);
+addItem("torch", 1);
 refreshInventoryUI();
 refreshLootUI();
 updatePanelLayout();
@@ -3756,12 +5248,16 @@ function loop(){
     const moveAmount = updatePlayer(delta);
     updateAnimals(delta);
     updateVitals(delta);
+    if (player.health <= 0) showDeathScreen();
     updateToolAnimation(delta, moveAmount);
+    updatePendingMeleeHit();
     updateEquippedTool();
     updateParticles(delta);
+    updateFlyingArrows(delta);
     updateFallingTrees(delta);
     updateBreakingNodes(delta);
     updatePlacedBuilds(delta);
+    updateToolCupboardDecay(delta);
     finishCraftingIfReady();
     updateCraftQueueUI();
     updateBuildPreview();
@@ -3780,6 +5276,7 @@ loop();
 onresize = () => {
   camera.aspect = innerWidth/innerHeight;
   camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 0.9));
   renderer.setSize(innerWidth, innerHeight);
   if (mapOpen) drawWorldMap();
 };
